@@ -95,6 +95,21 @@ To plot newly computed results instead of the reference summaries:
 python -m isac.figures --simulation-results outputs --rt-results outputs/rt
 ```
 
+## Beam front end with tracking and scheduling
+
+The modules below extend the paper model. They do not change the paper pipeline or its outputs.
+
+- **Multi-scatterer target** (`target.py`). The vehicle is a rigid L × W box. Each visible face contributes its centre and end corners. Every scatterer is an independent Swerling-1 reflector: the dominant face is at the design RCS, corners at −6 dB and other faces at −10 dB. Scatterer powers add per receive cell through the receive-array and finite-subcarrier delay responses. The tracker's position and heading uncertainty is integrated over an exact-mass cell quadrature. All scatterers move rigidly with each pose node. P_D is E[max over scatterer cells], a lower bound on detection in any cell. With one scatterer and no pose spread it reduces exactly to `detection.predictive_pd`.
+- **Tracker** (`tracker.py`). This is a constant-velocity EKF in scene coordinates with the paper's road-axis white-acceleration noise. A detected cell is associated with the nearest predicted scatterer. Measurement noise is the angle and delay CRB at the *measured* SNR and the *granted* bandwidth. `RcsEstimator` turns detection SNRs into a lower-confidence RCS design value and falls back to the calibration prior until enough looks exist. `steady_state_polar` reproduces `model.track_covariance` as a special case.
+- **Front end** (`frontend.py`, messages in `interfaces.py`). It takes a `TrackReport`, the scheduler's `GrantReport`s and an `RcsReport`. It predicts the track to each grant's actual time and screens candidates against the grant's measured SINR and MCS budget. It bounds UE loss over the SRS direction estimate, or over the grid-beam cell when no estimate exists. It then predicts P_D with the extended or point model and returns a `BeamDecision`: the cheapest sequential-policy reuse, or else a dedicated beam. The sensing back end answers with a `SensingReport` for the tracker.
+- **Closed loop** (`closed_loop.py`). A simulated scheduler and sensing back end run the loop tracker → front end → back end → tracker on a vehicle approaching the corner RSU:
+
+```bash
+python -m isac.closed_loop --epochs 80 --period 4 --target-model extended --cls bus
+```
+
+Settings are in `data/frontend_parameters.json`. Logs go to `outputs/closed_loop/`.
+
 ## Numerical checks
 
 ```bash
@@ -118,5 +133,9 @@ Checks cover the finite-subcarrier filter response, exact grant-selection probab
 | `calibration.py` | Reference-focus calculation and receive-array response |
 | `quadrature.py` | Exact response caches and fixed-decision stress scoring |
 | `plot_*.py`, `figures.py` | Paper figures with common fonts and column geometry |
+| `target.py` | Multi-scatterer box target and pose-uncertainty detection probability |
+| `tracker.py` | CV EKF, CRB measurement noise and RCS estimator |
+| `interfaces.py`, `frontend.py` | Tracker/scheduler/sensing messages and beam decision |
+| `closed_loop.py` | Simulated scheduler and sensing back end in a closed loop |
 
 `data/` contains the compact scientific inputs, complete plotting summaries and regression fixtures. `assets/` contains the scene meshes, paper fonts and static scene illustration. `paper/` contains the current TeX sources and figure PDFs. Large full-batch path caches and historical experiment scripts are excluded.
