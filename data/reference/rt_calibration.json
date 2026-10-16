@@ -1,0 +1,1336 @@
+{
+  "method": "Same reference-focus MF calibration; corner material 0 supplies separate cues only",
+  "bandwidth": 122880000.0,
+  "prior_dbsm": -11.979561461650041,
+  "training": [
+    {
+      "key": "d0_offset_clear_car__accel__f000",
+      "site": "offset_clear",
+      "category": "car",
+      "draw": 0,
+      "u": 0.001490577575697994,
+      "r": 73.85155136845907,
+      "reference_power": 9.870711303200143e-17,
+      "sigma": -12.93908810037956
+    },
+    {
+      "key": "d0_offset_clear_car__accel__f001",
+      "site": "offset_clear",
+      "category": "car",
+      "draw": 0,
+      "u": 0.02543567416223416,
+      "r": 64.16666762568155,
+      "reference_power": 1.954951462865651e-16,
+      "sigma": -12.413218293510555
+    },
+    {
+      "key": "d0_offset_clear_car__accel__f002",
+      "site": "offset_clear",
+      "category": "car",
+      "draw": 0,
+      "u": 0.06544448465981055,
+      "r": 52.99406464360555,
+      "reference_power": 4.715917424167579e-16,
+      "sigma": -11.912206344461199
+    },
+    {
+      "key": "d0_offset_clear_car__accel__f003",
+      "site": "offset_clear",
+      "category": "car",
+      "draw": 0,
+      "u": 0.12497545234497365,
+      "r": 41.61697737909953,
+      "reference_power": 7.597453728174376e-16,
+      "sigma": -14.039455496960096
+    },
+    {
+      "key": "d0_offset_clear_car__accel__f004",
+      "site": "offset_clear",
+      "category": "car",
+      "draw": 0,
+      "u": 0.21571877409556398,
+      "r": 30.77714410349528,
+      "reference_power": 2.0504589286291976e-15,
+      "sigma": -14.969314045510613
+    },
+    {
+      "key": "d0_offset_clear_car__accel__f005",
+      "site": "offset_clear",
+      "category": "car",
+      "draw": 0,
+      "u": 0.3776905901153832,
+      "r": 21.994676902516684,
+      "reference_power": 6.2364295538572485e-15,
+      "sigma": -15.974893835123423
+    },
+    {
+      "key": "d0_offset_clear_bus__accel__f000",
+      "site": "offset_clear",
+      "category": "bus",
+      "draw": 0,
+      "u": 0.010990886994790219,
+      "r": 70.2942921374003,
+      "reference_power": 4.750757211517946e-16,
+      "sigma": -6.972526670364067
+    },
+    {
+      "key": "d0_offset_clear_bus__accel__f001",
+      "site": "offset_clear",
+      "category": "bus",
+      "draw": 0,
+      "u": 0.036933465209126354,
+      "r": 60.604915618896484,
+      "reference_power": 7.098674677037755e-16,
+      "sigma": -7.804870740538801
+    },
+    {
+      "key": "d0_offset_clear_bus__accel__f002",
+      "site": "offset_clear",
+      "category": "bus",
+      "draw": 0,
+      "u": 0.07655424910072446,
+      "r": 49.35909652709961,
+      "reference_power": 1.4127572510265847e-15,
+      "sigma": -8.381593991514057
+    },
+    {
+      "key": "d0_offset_clear_bus__accel__f003",
+      "site": "offset_clear",
+      "category": "bus",
+      "draw": 0,
+      "u": 0.146542816917145,
+      "r": 37.98630142211914,
+      "reference_power": 3.5204657679752865e-15,
+      "sigma": -8.965875851690406
+    },
+    {
+      "key": "d0_offset_clear_bus__accel__f004",
+      "site": "offset_clear",
+      "category": "bus",
+      "draw": 0,
+      "u": 0.27147103396003963,
+      "r": 27.394716262817383,
+      "reference_power": 9.103602026909923e-15,
+      "sigma": -10.518152606744394
+    },
+    {
+      "key": "d0_offset_clear_bus__accel__f005",
+      "site": "offset_clear",
+      "category": "bus",
+      "draw": 0,
+      "u": 0.431757977892888,
+      "r": 18.46296088434855,
+      "reference_power": 2.6861370795208514e-14,
+      "sigma": -12.673621808200274
+    },
+    {
+      "key": "d0_roadside_clear_car__accel__f000",
+      "site": "roadside_clear",
+      "category": "car",
+      "draw": 0,
+      "u": -0.0019379843940117694,
+      "r": 73.10808975957235,
+      "reference_power": 1.1233865886311618e-16,
+      "sigma": -12.553047707797251
+    },
+    {
+      "key": "d0_roadside_clear_car__accel__f001",
+      "site": "roadside_clear",
+      "category": "car",
+      "draw": 0,
+      "u": -0.007385183223800226,
+      "r": 63.32279999516805,
+      "reference_power": 2.53663017553543e-16,
+      "sigma": -11.511981559745452
+    },
+    {
+      "key": "d0_roadside_clear_car__accel__f002",
+      "site": "roadside_clear",
+      "category": "car",
+      "draw": 0,
+      "u": -0.01735725728937778,
+      "r": 51.901710822804766,
+      "reference_power": 4.743193733601785e-16,
+      "sigma": -12.24898193040541
+    },
+    {
+      "key": "d0_roadside_clear_car__accel__f003",
+      "site": "roadside_clear",
+      "category": "car",
+      "draw": 0,
+      "u": -0.03213600645319124,
+      "r": 40.21043808720906,
+      "reference_power": 8.262258234616261e-16,
+      "sigma": -14.272417676673978
+    },
+    {
+      "key": "d0_roadside_clear_car__accel__f004",
+      "site": "roadside_clear",
+      "category": "car",
+      "draw": 0,
+      "u": -0.06289217197843724,
+      "r": 28.864316940307617,
+      "reference_power": 3.975114914679341e-15,
+      "sigma": -13.209009247474254
+    },
+    {
+      "key": "d0_roadside_clear_car__accel__f005",
+      "site": "roadside_clear",
+      "category": "car",
+      "draw": 0,
+      "u": -0.14271789236551563,
+      "r": 19.373976378885907,
+      "reference_power": 8.960476493003954e-15,
+      "sigma": -16.604895826619494
+    },
+    {
+      "key": "d0_roadside_clear_bus__accel__f000",
+      "site": "roadside_clear",
+      "category": "bus",
+      "draw": 0,
+      "u": -0.0020660031975480793,
+      "r": 69.44461822509766,
+      "reference_power": 6.5587610875058e-16,
+      "sigma": -5.783195609290375
+    },
+    {
+      "key": "d0_roadside_clear_bus__accel__f001",
+      "site": "roadside_clear",
+      "category": "bus",
+      "draw": 0,
+      "u": -0.01247074589001207,
+      "r": 59.66541321538289,
+      "reference_power": 8.161070998555747e-16,
+      "sigma": -7.470579842356307
+    },
+    {
+      "key": "d0_roadside_clear_bus__accel__f002",
+      "site": "roadside_clear",
+      "category": "bus",
+      "draw": 0,
+      "u": -0.027346147234802942,
+      "r": 48.28659439086914,
+      "reference_power": 1.8497195262994398e-15,
+      "sigma": -7.59283565594478
+    },
+    {
+      "key": "d0_roadside_clear_bus__accel__f003",
+      "site": "roadside_clear",
+      "category": "bus",
+      "draw": 0,
+      "u": -0.04529466985269615,
+      "r": 36.51698684692383,
+      "reference_power": 4.1538907213382505e-15,
+      "sigma": -8.93260943658259
+    },
+    {
+      "key": "d0_roadside_clear_bus__accel__f004",
+      "site": "roadside_clear",
+      "category": "bus",
+      "draw": 0,
+      "u": -0.060555333994377965,
+      "r": 25.10994942448934,
+      "reference_power": 1.4568777165455283e-14,
+      "sigma": -9.988892985418076
+    },
+    {
+      "key": "d0_roadside_clear_bus__accel__f005",
+      "site": "roadside_clear",
+      "category": "bus",
+      "draw": 0,
+      "u": -0.16283655538380234,
+      "r": 15.570713668314616,
+      "reference_power": 4.516021486651583e-14,
+      "sigma": -13.3770567759439
+    },
+    {
+      "key": "d1_offset_clear_car__accel__f000",
+      "site": "offset_clear",
+      "category": "car",
+      "draw": 1,
+      "u": 0.0019157953908291877,
+      "r": 73.86965942382812,
+      "reference_power": 6.676275807512322e-16,
+      "sigma": -4.632970944943628
+    },
+    {
+      "key": "d1_offset_clear_car__accel__f001",
+      "site": "offset_clear",
+      "category": "car",
+      "draw": 1,
+      "u": 0.028075515847965075,
+      "r": 64.18933868408203,
+      "reference_power": 1.3100609762513695e-15,
+      "sigma": -4.145526355087475
+    },
+    {
+      "key": "d1_offset_clear_car__accel__f002",
+      "site": "offset_clear",
+      "category": "car",
+      "draw": 1,
+      "u": 0.06544894855006642,
+      "r": 52.984439849853516,
+      "reference_power": 2.5784827368252726e-15,
+      "sigma": -4.537381336112142
+    },
+    {
+      "key": "d1_offset_clear_car__accel__f003",
+      "site": "offset_clear",
+      "category": "car",
+      "draw": 1,
+      "u": 0.12528782728892315,
+      "r": 41.62160904668172,
+      "reference_power": 5.082649300798801e-15,
+      "sigma": -5.783301441476518
+    },
+    {
+      "key": "d1_offset_clear_car__accel__f004",
+      "site": "offset_clear",
+      "category": "car",
+      "draw": 1,
+      "u": 0.22127329694342313,
+      "r": 30.816652297973633,
+      "reference_power": 1.585676499155108e-14,
+      "sigma": -6.063393282973829
+    },
+    {
+      "key": "d1_offset_clear_car__accel__f005",
+      "site": "offset_clear",
+      "category": "car",
+      "draw": 1,
+      "u": 0.372487052909232,
+      "r": 21.9417425684611,
+      "reference_power": 4.109648969297845e-14,
+      "sigma": -7.828065618773815
+    },
+    {
+      "key": "d1_offset_clear_bus__accel__f000",
+      "site": "offset_clear",
+      "category": "bus",
+      "draw": 1,
+      "u": 0.012614795354299213,
+      "r": 70.30741119384766,
+      "reference_power": 3.4891494202787555e-15,
+      "sigma": 1.6902824495699533
+    },
+    {
+      "key": "d1_offset_clear_bus__accel__f001",
+      "site": "offset_clear",
+      "category": "bus",
+      "draw": 1,
+      "u": 0.03539463908246805,
+      "r": 60.568687126413984,
+      "reference_power": 5.924368776371946e-15,
+      "sigma": 1.3993897364784234
+    },
+    {
+      "key": "d1_offset_clear_bus__accel__f002",
+      "site": "offset_clear",
+      "category": "bus",
+      "draw": 1,
+      "u": 0.08116608007733828,
+      "r": 49.404381110890704,
+      "reference_power": 1.0396772810844666e-14,
+      "sigma": 0.30264655830448783
+    },
+    {
+      "key": "d1_offset_clear_bus__accel__f003",
+      "site": "offset_clear",
+      "category": "bus",
+      "draw": 1,
+      "u": 0.1487280882583491,
+      "r": 38.02100115865072,
+      "reference_power": 2.4689271364749897e-14,
+      "sigma": -0.49093284362933376
+    },
+    {
+      "key": "d1_offset_clear_bus__accel__f004",
+      "site": "offset_clear",
+      "category": "bus",
+      "draw": 1,
+      "u": 0.2546788329107355,
+      "r": 27.221563619740802,
+      "reference_power": 6.177901090428763e-14,
+      "sigma": -2.312025295622871
+    },
+    {
+      "key": "d1_offset_clear_bus__accel__f005",
+      "site": "offset_clear",
+      "category": "bus",
+      "draw": 1,
+      "u": 0.43224292136160397,
+      "r": 18.408553732554118,
+      "reference_power": 1.9376223924088513e-13,
+      "sigma": -4.143479282434041
+    },
+    {
+      "key": "d1_roadside_clear_car__accel__f000",
+      "site": "roadside_clear",
+      "category": "car",
+      "draw": 1,
+      "u": -0.0008119343887771326,
+      "r": 73.0783462524414,
+      "reference_power": 7.489784959411443e-16,
+      "sigma": -4.3207155913833315
+    },
+    {
+      "key": "d1_roadside_clear_car__accel__f001",
+      "site": "roadside_clear",
+      "category": "car",
+      "draw": 1,
+      "u": -0.009854827667117224,
+      "r": 63.29266357421875,
+      "reference_power": 1.5733874031024864e-15,
+      "sigma": -3.5944659162574717
+    },
+    {
+      "key": "d1_roadside_clear_car__accel__f002",
+      "site": "roadside_clear",
+      "category": "car",
+      "draw": 1,
+      "u": -0.017713707483463337,
+      "r": 51.880706787109375,
+      "reference_power": 2.718975537782269e-15,
+      "sigma": -4.67266914854693
+    },
+    {
+      "key": "d1_roadside_clear_car__accel__f003",
+      "site": "roadside_clear",
+      "category": "car",
+      "draw": 1,
+      "u": -0.03599194197498355,
+      "r": 40.19755203984578,
+      "reference_power": 6.111482190705086e-15,
+      "sigma": -5.58750776089814
+    },
+    {
+      "key": "d1_roadside_clear_car__accel__f004",
+      "site": "roadside_clear",
+      "category": "car",
+      "draw": 1,
+      "u": -0.06726760660962007,
+      "r": 28.920839622243246,
+      "reference_power": 2.13446103296475e-14,
+      "sigma": -5.875639319200703
+    },
+    {
+      "key": "d1_roadside_clear_car__accel__f005",
+      "site": "roadside_clear",
+      "category": "car",
+      "draw": 1,
+      "u": -0.13010339856533124,
+      "r": 19.315059974416098,
+      "reference_power": 7.195236962366474e-14,
+      "sigma": -7.610664059055049
+    },
+    {
+      "key": "d1_roadside_clear_bus__accel__f000",
+      "site": "roadside_clear",
+      "category": "bus",
+      "draw": 1,
+      "u": -0.00423166294231726,
+      "r": 69.47537994384766,
+      "reference_power": 4.177026573900298e-15,
+      "sigma": 2.2649520913913586
+    },
+    {
+      "key": "d1_roadside_clear_bus__accel__f001",
+      "site": "roadside_clear",
+      "category": "bus",
+      "draw": 1,
+      "u": -0.01192743913942432,
+      "r": 59.627464606984454,
+      "reference_power": 6.8987966096049225e-15,
+      "sigma": 1.7886296333566387
+    },
+    {
+      "key": "d1_roadside_clear_bus__accel__f002",
+      "site": "roadside_clear",
+      "category": "bus",
+      "draw": 1,
+      "u": -0.022770699406769675,
+      "r": 48.24104371592204,
+      "reference_power": 1.3108781976333929e-14,
+      "sigma": 0.8953337081934134
+    },
+    {
+      "key": "d1_roadside_clear_bus__accel__f003",
+      "site": "roadside_clear",
+      "category": "bus",
+      "draw": 1,
+      "u": -0.04355274585300232,
+      "r": 36.49495790786744,
+      "reference_power": 2.8102608251389292e-14,
+      "sigma": -0.6401765337090146
+    },
+    {
+      "key": "d1_roadside_clear_bus__accel__f004",
+      "site": "roadside_clear",
+      "category": "bus",
+      "draw": 1,
+      "u": -0.07115373063801492,
+      "r": 25.14938860982259,
+      "reference_power": 8.279974986707001e-14,
+      "sigma": -2.4155699959930086
+    },
+    {
+      "key": "d1_roadside_clear_bus__accel__f005",
+      "site": "roadside_clear",
+      "category": "bus",
+      "draw": 1,
+      "u": -0.15743684267187877,
+      "r": 15.56591854578654,
+      "reference_power": 3.1783528791069375e-13,
+      "sigma": -4.907946236008371
+    },
+    {
+      "key": "d2_offset_clear_car__accel__f000",
+      "site": "offset_clear",
+      "category": "car",
+      "draw": 2,
+      "u": -0.00046254742430200597,
+      "r": 73.85155136845907,
+      "reference_power": 9.909846946904599e-17,
+      "sigma": -12.921903129087287
+    },
+    {
+      "key": "d2_offset_clear_car__accel__f001",
+      "site": "offset_clear",
+      "category": "car",
+      "draw": 2,
+      "u": 0.02492321704041912,
+      "r": 64.18399110361734,
+      "reference_power": 1.880021990461378e-16,
+      "sigma": -12.578259459133058
+    },
+    {
+      "key": "d2_offset_clear_car__accel__f002",
+      "site": "offset_clear",
+      "category": "car",
+      "draw": 2,
+      "u": 0.06494288910660558,
+      "r": 52.97729460932414,
+      "reference_power": 4.795646936611175e-16,
+      "sigma": -11.844894433012579
+    },
+    {
+      "key": "d2_offset_clear_car__accel__f003",
+      "site": "offset_clear",
+      "category": "car",
+      "draw": 2,
+      "u": 0.12497545234497365,
+      "r": 41.61697737909953,
+      "reference_power": 7.655271605332499e-16,
+      "sigma": -14.006530095464466
+    },
+    {
+      "key": "d2_offset_clear_car__accel__f004",
+      "site": "offset_clear",
+      "category": "car",
+      "draw": 2,
+      "u": 0.21571877409556398,
+      "r": 30.777144103495278,
+      "reference_power": 2.0870474888671424e-15,
+      "sigma": -14.892501480457467
+    },
+    {
+      "key": "d2_offset_clear_car__accel__f005",
+      "site": "offset_clear",
+      "category": "car",
+      "draw": 2,
+      "u": 0.3776905901153832,
+      "r": 22.032797484842938,
+      "reference_power": 6.2786515945234666e-15,
+      "sigma": -15.915507960388082
+    },
+    {
+      "key": "d2_offset_clear_bus__accel__f000",
+      "site": "offset_clear",
+      "category": "bus",
+      "draw": 2,
+      "u": 0.012944011994790219,
+      "r": 70.2942921374003,
+      "reference_power": 5.017637150917644e-16,
+      "sigma": -6.735162510833096
+    },
+    {
+      "key": "d2_offset_clear_bus__accel__f001",
+      "site": "offset_clear",
+      "category": "bus",
+      "draw": 2,
+      "u": 0.036933465209126354,
+      "r": 60.604915618896484,
+      "reference_power": 7.24321722959415e-16,
+      "sigma": -7.717328373189664
+    },
+    {
+      "key": "d2_offset_clear_bus__accel__f002",
+      "site": "offset_clear",
+      "category": "bus",
+      "draw": 2,
+      "u": 0.07655424910072446,
+      "r": 49.35909652709961,
+      "reference_power": 1.484521626282684e-15,
+      "sigma": -8.166404154455076
+    },
+    {
+      "key": "d2_offset_clear_bus__accel__f003",
+      "site": "offset_clear",
+      "category": "bus",
+      "draw": 2,
+      "u": 0.146542816917145,
+      "r": 37.98630142211914,
+      "reference_power": 3.694961010039644e-15,
+      "sigma": -8.755778508921043
+    },
+    {
+      "key": "d2_offset_clear_bus__accel__f004",
+      "site": "offset_clear",
+      "category": "bus",
+      "draw": 2,
+      "u": 0.27202648932280826,
+      "r": 27.391928031667074,
+      "reference_power": 9.602245027958592e-15,
+      "sigma": -10.288325592900904
+    },
+    {
+      "key": "d2_offset_clear_bus__accel__f005",
+      "site": "offset_clear",
+      "category": "bus",
+      "draw": 2,
+      "u": 0.431757977892888,
+      "r": 18.46296088434855,
+      "reference_power": 2.748486154759729e-14,
+      "sigma": -12.573967991372758
+    },
+    {
+      "key": "d2_roadside_clear_car__accel__f000",
+      "site": "roadside_clear",
+      "category": "car",
+      "draw": 2,
+      "u": 1.5140605988230647e-05,
+      "r": 73.10808975957235,
+      "reference_power": 1.0998470267715921e-16,
+      "sigma": -12.645017204826756
+    },
+    {
+      "key": "d2_roadside_clear_car__accel__f001",
+      "site": "roadside_clear",
+      "category": "car",
+      "draw": 2,
+      "u": -0.007385183223800226,
+      "r": 63.32279999516805,
+      "reference_power": 2.516318360948773e-16,
+      "sigma": -11.546897238949239
+    },
+    {
+      "key": "d2_roadside_clear_car__accel__f002",
+      "site": "roadside_clear",
+      "category": "car",
+      "draw": 2,
+      "u": -0.01735725728937778,
+      "r": 51.901710822804766,
+      "reference_power": 4.694975750560221e-16,
+      "sigma": -12.293357031291857
+    },
+    {
+      "key": "d2_roadside_clear_car__accel__f003",
+      "site": "roadside_clear",
+      "category": "car",
+      "draw": 2,
+      "u": -0.03213600645319124,
+      "r": 40.21043808720906,
+      "reference_power": 8.233995010778424e-16,
+      "sigma": -14.28729932765423
+    },
+    {
+      "key": "d2_roadside_clear_car__accel__f004",
+      "site": "roadside_clear",
+      "category": "car",
+      "draw": 2,
+      "u": -0.06178980305852373,
+      "r": 28.886384963989258,
+      "reference_power": 3.922502653786719e-15,
+      "sigma": -13.253597261433914
+    },
+    {
+      "key": "d2_roadside_clear_car__accel__f005",
+      "site": "roadside_clear",
+      "category": "car",
+      "draw": 2,
+      "u": -0.14271789236551563,
+      "r": 19.335855796559652,
+      "reference_power": 8.977110495204525e-15,
+      "sigma": -16.63105586277202
+    },
+    {
+      "key": "d2_roadside_clear_bus__accel__f000",
+      "site": "roadside_clear",
+      "category": "bus",
+      "draw": 2,
+      "u": -0.0020660031975480793,
+      "r": 69.44461822509766,
+      "reference_power": 6.484604744681954e-16,
+      "sigma": -5.832578625770814
+    },
+    {
+      "key": "d2_roadside_clear_bus__accel__f001",
+      "site": "roadside_clear",
+      "category": "bus",
+      "draw": 2,
+      "u": -0.01051762089001207,
+      "r": 59.62729263305664,
+      "reference_power": 8.150965883067676e-16,
+      "sigma": -7.487063128508105
+    },
+    {
+      "key": "d2_roadside_clear_bus__accel__f002",
+      "site": "roadside_clear",
+      "category": "bus",
+      "draw": 2,
+      "u": -0.025893788808666537,
+      "r": 48.25939209721883,
+      "reference_power": 1.8904597201679434e-15,
+      "sigma": -7.508009348295509
+    },
+    {
+      "key": "d2_roadside_clear_bus__accel__f003",
+      "site": "roadside_clear",
+      "category": "bus",
+      "draw": 2,
+      "u": -0.04529466985269615,
+      "r": 36.51698684692383,
+      "reference_power": 4.305655315462272e-15,
+      "sigma": -8.776767508783669
+    },
+    {
+      "key": "d2_roadside_clear_bus__accel__f004",
+      "site": "roadside_clear",
+      "category": "bus",
+      "draw": 2,
+      "u": -0.06189375349851858,
+      "r": 25.129160239919027,
+      "reference_power": 1.4591842637546113e-14,
+      "sigma": -9.968737108903433
+    },
+    {
+      "key": "d2_roadside_clear_bus__accel__f005",
+      "site": "roadside_clear",
+      "category": "bus",
+      "draw": 2,
+      "u": -0.16283655538380234,
+      "r": 15.532593085988363,
+      "reference_power": 4.674902808083863e-14,
+      "sigma": -13.269473048638565
+    },
+    {
+      "key": "d3_offset_clear_car__accel__f000",
+      "site": "offset_clear",
+      "category": "car",
+      "draw": 3,
+      "u": 0.003192232315191142,
+      "r": 73.8676986694336,
+      "reference_power": 4.19036682583036e-16,
+      "sigma": -6.656254326575782
+    },
+    {
+      "key": "d3_offset_clear_car__accel__f001",
+      "site": "offset_clear",
+      "category": "car",
+      "draw": 3,
+      "u": 0.028075515847965075,
+      "r": 64.18933868408203,
+      "reference_power": 9.446402519717993e-16,
+      "sigma": -5.565776983797442
+    },
+    {
+      "key": "d3_offset_clear_car__accel__f002",
+      "site": "offset_clear",
+      "category": "car",
+      "draw": 3,
+      "u": 0.06544894855006642,
+      "r": 52.984439849853516,
+      "reference_power": 2.0491163733354198e-15,
+      "sigma": -5.5353573818641095
+    },
+    {
+      "key": "d3_offset_clear_car__accel__f003",
+      "site": "offset_clear",
+      "category": "car",
+      "draw": 3,
+      "u": 0.12528782728892315,
+      "r": 41.62160904668172,
+      "reference_power": 3.84075155248099e-15,
+      "sigma": -7.000040740990023
+    },
+    {
+      "key": "d3_offset_clear_car__accel__f004",
+      "site": "offset_clear",
+      "category": "car",
+      "draw": 3,
+      "u": 0.22127329694342313,
+      "r": 30.816652297973633,
+      "reference_power": 1.1573631873773493e-14,
+      "sigma": -7.430842534830784
+    },
+    {
+      "key": "d3_offset_clear_car__accel__f005",
+      "site": "offset_clear",
+      "category": "car",
+      "draw": 3,
+      "u": 0.3776905901153832,
+      "r": 21.994676902516684,
+      "reference_power": 3.073682447691273e-14,
+      "sigma": -9.047664073879819
+    },
+    {
+      "key": "d3_offset_clear_bus__accel__f000",
+      "site": "offset_clear",
+      "category": "bus",
+      "draw": 3,
+      "u": 0.012614795354299213,
+      "r": 70.30741119384766,
+      "reference_power": 2.504412871898668e-15,
+      "sigma": 0.2501460402283764
+    },
+    {
+      "key": "d3_offset_clear_bus__accel__f001",
+      "site": "offset_clear",
+      "category": "bus",
+      "draw": 3,
+      "u": 0.03539463908246805,
+      "r": 60.568687126413984,
+      "reference_power": 4.282412322080648e-15,
+      "sigma": -0.010146307291430401
+    },
+    {
+      "key": "d3_offset_clear_bus__accel__f002",
+      "site": "offset_clear",
+      "category": "bus",
+      "draw": 3,
+      "u": 0.07853827772558082,
+      "r": 49.38747024536133,
+      "reference_power": 7.679654337043596e-15,
+      "sigma": -1.0188695417052613
+    },
+    {
+      "key": "d3_offset_clear_bus__accel__f003",
+      "site": "offset_clear",
+      "category": "bus",
+      "draw": 3,
+      "u": 0.1478963388877643,
+      "r": 38.00637148208619,
+      "reference_power": 1.8164797327238205e-14,
+      "sigma": -1.8303955881322944
+    },
+    {
+      "key": "d3_offset_clear_bus__accel__f004",
+      "site": "offset_clear",
+      "category": "bus",
+      "draw": 3,
+      "u": 0.25345378371935934,
+      "r": 27.205125776672364,
+      "reference_power": 4.572479877780525e-14,
+      "sigma": -3.629409957315788
+    },
+    {
+      "key": "d3_offset_clear_bus__accel__f005",
+      "site": "offset_clear",
+      "category": "bus",
+      "draw": 3,
+      "u": 0.4322791989547186,
+      "r": 18.407633140309652,
+      "reference_power": 1.424069476733995e-13,
+      "sigma": -5.4817277171225225
+    },
+    {
+      "key": "d3_roadside_clear_car__accel__f000",
+      "site": "roadside_clear",
+      "category": "car",
+      "draw": 3,
+      "u": -0.0027217403440467766,
+      "r": 73.091552734375,
+      "reference_power": 5.931017588178017e-16,
+      "sigma": -5.330977871889178
+    },
+    {
+      "key": "d3_roadside_clear_car__accel__f001",
+      "site": "roadside_clear",
+      "category": "car",
+      "draw": 3,
+      "u": -0.009897901495601585,
+      "r": 63.3174934387207,
+      "reference_power": 1.1947316798589127e-15,
+      "sigma": -4.783305152387081
+    },
+    {
+      "key": "d3_roadside_clear_car__accel__f002",
+      "site": "roadside_clear",
+      "category": "car",
+      "draw": 3,
+      "u": -0.017713707483463337,
+      "r": 51.880706787109375,
+      "reference_power": 2.1619370582714795e-15,
+      "sigma": -5.668291692430397
+    },
+    {
+      "key": "d3_roadside_clear_car__accel__f003",
+      "site": "roadside_clear",
+      "category": "car",
+      "draw": 3,
+      "u": -0.03427928988361527,
+      "r": 40.16860580444336,
+      "reference_power": 4.4027185988262335e-15,
+      "sigma": -7.0242778984841685
+    },
+    {
+      "key": "d3_roadside_clear_car__accel__f004",
+      "site": "roadside_clear",
+      "category": "car",
+      "draw": 3,
+      "u": -0.06715165634566252,
+      "r": 28.893936157226562,
+      "reference_power": 1.6440475442182254e-14,
+      "sigma": -7.025545429384024
+    },
+    {
+      "key": "d3_roadside_clear_car__accel__f005",
+      "site": "roadside_clear",
+      "category": "car",
+      "draw": 3,
+      "u": -0.13205652356533124,
+      "r": 19.315059974416098,
+      "reference_power": 5.523339034035054e-14,
+      "sigma": -8.759098051918295
+    },
+    {
+      "key": "d3_roadside_clear_bus__accel__f000",
+      "site": "roadside_clear",
+      "category": "bus",
+      "draw": 3,
+      "u": -0.005011529908493585,
+      "r": 69.47608597539266,
+      "reference_power": 3.174310620768954e-15,
+      "sigma": 1.072950467938948
+    },
+    {
+      "key": "d3_roadside_clear_bus__accel__f001",
+      "site": "roadside_clear",
+      "category": "bus",
+      "draw": 3,
+      "u": -0.011827496350511049,
+      "r": 59.638641669972735,
+      "reference_power": 4.980812780053454e-15,
+      "sigma": 0.37715440172752546
+    },
+    {
+      "key": "d3_roadside_clear_bus__accel__f002",
+      "site": "roadside_clear",
+      "category": "bus",
+      "draw": 3,
+      "u": -0.02400538393500914,
+      "r": 48.23210175298055,
+      "reference_power": 1.0079388387655828e-14,
+      "sigma": -0.24916822697247076
+    },
+    {
+      "key": "d3_roadside_clear_bus__accel__f003",
+      "site": "roadside_clear",
+      "category": "bus",
+      "draw": 3,
+      "u": -0.04326675223502728,
+      "r": 36.51179216690064,
+      "reference_power": 2.133386907473565e-14,
+      "sigma": -1.8289352300914103
+    },
+    {
+      "key": "d3_roadside_clear_bus__accel__f004",
+      "site": "roadside_clear",
+      "category": "bus",
+      "draw": 3,
+      "u": -0.07295756972976715,
+      "r": 25.174409209187825,
+      "reference_power": 6.3190861762154e-14,
+      "sigma": -3.572043235891216
+    },
+    {
+      "key": "d3_roadside_clear_bus__accel__f005",
+      "site": "roadside_clear",
+      "category": "bus",
+      "draw": 3,
+      "u": -0.15642084499017028,
+      "r": 15.56148841603597,
+      "reference_power": 2.3594559217390004e-13,
+      "sigma": -6.206793475105153
+    },
+    {
+      "key": "d4_offset_clear_car__accel__f000",
+      "site": "offset_clear",
+      "category": "car",
+      "draw": 4,
+      "u": 0.003192232315191142,
+      "r": 73.8676986694336,
+      "reference_power": 4.054779620811635e-16,
+      "sigma": -6.799102204646019
+    },
+    {
+      "key": "d4_offset_clear_car__accel__f001",
+      "site": "offset_clear",
+      "category": "car",
+      "draw": 4,
+      "u": 0.028075515847965075,
+      "r": 64.18933868408203,
+      "reference_power": 9.276047954036588e-16,
+      "sigma": -5.644811605660522
+    },
+    {
+      "key": "d4_offset_clear_car__accel__f002",
+      "site": "offset_clear",
+      "category": "car",
+      "draw": 4,
+      "u": 0.06544894855006642,
+      "r": 52.984439849853516,
+      "reference_power": 2.04484868938532e-15,
+      "sigma": -5.544411842432262
+    },
+    {
+      "key": "d4_offset_clear_car__accel__f003",
+      "site": "offset_clear",
+      "category": "car",
+      "draw": 4,
+      "u": 0.12528782728892315,
+      "r": 41.62160904668172,
+      "reference_power": 3.766301599450397e-15,
+      "sigma": -7.08505194186981
+    },
+    {
+      "key": "d4_offset_clear_car__accel__f004",
+      "site": "offset_clear",
+      "category": "car",
+      "draw": 4,
+      "u": 0.22127329694342313,
+      "r": 30.816652297973633,
+      "reference_power": 1.124957054102694e-14,
+      "sigma": -7.554179746696938
+    },
+    {
+      "key": "d4_offset_clear_car__accel__f005",
+      "site": "offset_clear",
+      "category": "car",
+      "draw": 4,
+      "u": 0.3796437151153832,
+      "r": 22.032797484842938,
+      "reference_power": 3.0243946100890654e-14,
+      "sigma": -9.087787251356149
+    },
+    {
+      "key": "d4_offset_clear_bus__accel__f000",
+      "site": "offset_clear",
+      "category": "bus",
+      "draw": 4,
+      "u": 0.012614795354299213,
+      "r": 70.30741119384766,
+      "reference_power": 2.486784383043933e-15,
+      "sigma": 0.21946808110295504
+    },
+    {
+      "key": "d4_offset_clear_bus__accel__f001",
+      "site": "offset_clear",
+      "category": "bus",
+      "draw": 4,
+      "u": 0.03539463908246805,
+      "r": 60.568687126413984,
+      "reference_power": 4.1876734722360355e-15,
+      "sigma": -0.10730299887048059
+    },
+    {
+      "key": "d4_offset_clear_bus__accel__f002",
+      "site": "offset_clear",
+      "category": "bus",
+      "draw": 4,
+      "u": 0.07853827772558082,
+      "r": 49.38747024536133,
+      "reference_power": 7.540384387475152e-15,
+      "sigma": -1.0983514141156974
+    },
+    {
+      "key": "d4_offset_clear_bus__accel__f003",
+      "site": "offset_clear",
+      "category": "bus",
+      "draw": 4,
+      "u": 0.1478963388877643,
+      "r": 38.00637148208619,
+      "reference_power": 1.7839931466005556e-14,
+      "sigma": -1.9087693376651154
+    },
+    {
+      "key": "d4_offset_clear_bus__accel__f004",
+      "site": "offset_clear",
+      "category": "bus",
+      "draw": 4,
+      "u": 0.2536543340966385,
+      "r": 27.185737265268962,
+      "reference_power": 4.476911034964074e-14,
+      "sigma": -3.7335282542918757
+    },
+    {
+      "key": "d4_offset_clear_bus__accel__f005",
+      "site": "offset_clear",
+      "category": "bus",
+      "draw": 4,
+      "u": 0.4322791989547186,
+      "r": 18.407633140309652,
+      "reference_power": 1.400404477666532e-13,
+      "sigma": -5.554504589425413
+    },
+    {
+      "key": "d4_roadside_clear_car__accel__f000",
+      "site": "roadside_clear",
+      "category": "car",
+      "draw": 4,
+      "u": -0.0018350631098057802,
+      "r": 73.10869248174032,
+      "reference_power": 5.79554858636665e-16,
+      "sigma": -5.427251328647754
+    },
+    {
+      "key": "d4_roadside_clear_car__accel__f001",
+      "site": "roadside_clear",
+      "category": "car",
+      "draw": 4,
+      "u": -0.009897901495601585,
+      "r": 63.3174934387207,
+      "reference_power": 1.1714224064796754e-15,
+      "sigma": -4.868873681901152
+    },
+    {
+      "key": "d4_roadside_clear_car__accel__f002",
+      "site": "roadside_clear",
+      "category": "car",
+      "draw": 4,
+      "u": -0.016993691294333545,
+      "r": 51.8984225537618,
+      "reference_power": 2.0811505665836645e-15,
+      "sigma": -5.82775618638961
+    },
+    {
+      "key": "d4_roadside_clear_car__accel__f003",
+      "site": "roadside_clear",
+      "category": "car",
+      "draw": 4,
+      "u": -0.03427928988361527,
+      "r": 40.16860580444336,
+      "reference_power": 4.181531282211212e-15,
+      "sigma": -7.24813368015417
+    },
+    {
+      "key": "d4_roadside_clear_car__accel__f004",
+      "site": "roadside_clear",
+      "category": "car",
+      "draw": 4,
+      "u": -0.06519853134566252,
+      "r": 28.893936157226562,
+      "reference_power": 1.588915028040201e-14,
+      "sigma": -7.173682430496107
+    },
+    {
+      "key": "d4_roadside_clear_car__accel__f005",
+      "site": "roadside_clear",
+      "category": "car",
+      "draw": 4,
+      "u": -0.13205652356533124,
+      "r": 19.315059974416098,
+      "reference_power": 5.413828061192544e-14,
+      "sigma": -8.846070483205999
+    },
+    {
+      "key": "d4_roadside_clear_bus__accel__f000",
+      "site": "roadside_clear",
+      "category": "bus",
+      "draw": 4,
+      "u": -0.004949638241507978,
+      "r": 69.4545669555664,
+      "reference_power": 3.1078441179244944e-15,
+      "sigma": 0.9756670783824734
+    },
+    {
+      "key": "d4_roadside_clear_bus__accel__f001",
+      "site": "roadside_clear",
+      "category": "bus",
+      "draw": 4,
+      "u": -0.011827496350511049,
+      "r": 59.638641669972735,
+      "reference_power": 4.94543155901171e-15,
+      "sigma": 0.3461941843247295
+    },
+    {
+      "key": "d4_roadside_clear_bus__accel__f002",
+      "site": "roadside_clear",
+      "category": "bus",
+      "draw": 4,
+      "u": -0.02400538393500914,
+      "r": 48.23210175298055,
+      "reference_power": 9.833193404362347e-15,
+      "sigma": -0.3565642165419607
+    },
+    {
+      "key": "d4_roadside_clear_bus__accel__f003",
+      "site": "roadside_clear",
+      "category": "bus",
+      "draw": 4,
+      "u": -0.04131362723502728,
+      "r": 36.51179216690064,
+      "reference_power": 2.0967583175703142e-14,
+      "sigma": -1.9041477403765084
+    },
+    {
+      "key": "d4_roadside_clear_bus__accel__f004",
+      "site": "roadside_clear",
+      "category": "bus",
+      "draw": 4,
+      "u": -0.07335482091321718,
+      "r": 25.17809611409505,
+      "reference_power": 6.164448746544789e-14,
+      "sigma": -3.6770995675652296
+    },
+    {
+      "key": "d4_roadside_clear_bus__accel__f005",
+      "site": "roadside_clear",
+      "category": "bus",
+      "draw": 4,
+      "u": -0.15649102848603771,
+      "r": 15.569957043965656,
+      "reference_power": 2.3048325842086257e-13,
+      "sigma": -6.299067084493519
+    }
+  ],
+  "cues": {
+    "car__accel__f000": {
+      "key": "d0_corner_car__accel__f000",
+      "site": "corner",
+      "category": "car",
+      "draw": 0,
+      "u": 0.0029828311563427604,
+      "r": 74.31743271611532,
+      "reference_power": 1.0029638025353038e-16,
+      "sigma": -12.760476972628672
+    },
+    "car__accel__f001": {
+      "key": "d0_corner_car__accel__f001",
+      "site": "corner",
+      "category": "car",
+      "draw": 0,
+      "u": 0.03507100033407524,
+      "r": 64.75687758661905,
+      "reference_power": 2.0820115916020296e-16,
+      "sigma": -11.980690079842791
+    },
+    "car__accel__f002": {
+      "key": "d0_corner_car__accel__f002",
+      "site": "corner",
+      "category": "car",
+      "draw": 0,
+      "u": 0.08186535359721597,
+      "r": 53.62535826899211,
+      "reference_power": 3.188461787382902e-16,
+      "sigma": -13.406337077905732
+    },
+    "car__accel__f003": {
+      "key": "d0_corner_car__accel__f003",
+      "site": "corner",
+      "category": "car",
+      "draw": 0,
+      "u": 0.14293531380443297,
+      "r": 42.263221428171796,
+      "reference_power": 7.673944328787039e-16,
+      "sigma": -13.72826718084401
+    },
+    "car__accel__f004": {
+      "key": "d0_corner_car__accel__f004",
+      "site": "corner",
+      "category": "car",
+      "draw": 0,
+      "u": 0.25991829408005546,
+      "r": 31.857963249460855,
+      "reference_power": 2.0470136300378707e-15,
+      "sigma": -14.377029889268423
+    },
+    "car__accel__f005": {
+      "key": "d0_corner_car__accel__f005",
+      "site": "corner",
+      "category": "car",
+      "draw": 0,
+      "u": 0.42348531035362913,
+      "r": 23.229650809987387,
+      "reference_power": 5.037732210640243e-15,
+      "sigma": -15.95289947006636
+    },
+    "bus__accel__f000": {
+      "key": "d0_corner_bus__accel__f000",
+      "site": "corner",
+      "category": "bus",
+      "draw": 0,
+      "u": 0.018037864344708224,
+      "r": 70.77796523310343,
+      "reference_power": 4.653610418788822e-16,
+      "sigma": -6.943134354854614
+    },
+    "bus__accel__f001": {
+      "key": "d0_corner_bus__accel__f001",
+      "site": "corner",
+      "category": "bus",
+      "draw": 0,
+      "u": 0.04581559117730629,
+      "r": 61.11859893798828,
+      "reference_power": 8.33317848034061e-16,
+      "sigma": -6.9619150719382406
+    },
+    "bus__accel__f002": {
+      "key": "d0_corner_bus__accel__f002",
+      "site": "corner",
+      "category": "bus",
+      "draw": 0,
+      "u": 0.09527438253396056,
+      "r": 50.01671281382243,
+      "reference_power": 1.5706708991467574e-15,
+      "sigma": -7.691499708064589
+    },
+    "bus__accel__f003": {
+      "key": "d0_corner_bus__accel__f003",
+      "site": "corner",
+      "category": "bus",
+      "draw": 0,
+      "u": 0.1890634288878595,
+      "r": 38.973453521728516,
+      "reference_power": 3.786950985069842e-15,
+      "sigma": -8.203305019976932
+    },
+    "bus__accel__f004": {
+      "key": "d0_corner_bus__accel__f004",
+      "site": "corner",
+      "category": "bus",
+      "draw": 0,
+      "u": 0.2960860529975243,
+      "r": 28.23534743525187,
+      "reference_power": 7.488214064199578e-15,
+      "sigma": -10.84144955746521
+    },
+    "bus__accel__f005": {
+      "key": "d0_corner_bus__accel__f005",
+      "site": "corner",
+      "category": "bus",
+      "draw": 0,
+      "u": 0.4945161119307011,
+      "r": 19.938051223754883,
+      "reference_power": 2.3294449049418985e-14,
+      "sigma": -11.95712478233107
+    }
+  },
+  "validation_materials": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "validation_traces": 48
+}

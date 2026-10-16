@@ -1,0 +1,34 @@
+{
+  "key": "t00_f0",
+  "trajectory": 0,
+  "samples": 16000000,
+  "seed": 32,
+  "variant": "llvm_ad_mono_polarized",
+  "target_paths": 147,
+  "served_only_paths": 30,
+  "joint_paths": 0,
+  "comm_paths": 127872,
+  "total_paths": 444711,
+  "unscored_environment_paths": 444534,
+  "antenna_xyz": [
+    -8.372596292086545,
+    -82.51484234519373,
+    1.35
+  ],
+  "served_dims": [
+    0.3400000035762787,
+    0.8199999928474426,
+    1.75
+  ],
+  "cue": {
+    "available": true,
+    "u": 0.07288043157832522,
+    "r": 66.37354691289266,
+    "reference_power": 8.152475804931452e-16,
+    "sigma": -5.624261270365549
+  },
+  "elapsed_s": 7.7992730140686035,
+  "protocol_sha256": "58827bf7a604ef38be3e1e69c00351a03e59a7087bc28ea91872ed3e67c58890",
+  "path_sha256": "c1784da0b953b354cb59df27af80657d00483d1a1e826a8aeea64db586b7577d",
+  "code_sha256": "6943827c9e2c1b3fe3b5205401119c8a4376d17f6141913a7e76554893900169"
+}

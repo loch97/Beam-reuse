@@ -1,0 +1,120 @@
+<scene version="2.1.0">
+
+	<bsdf type="twosided" id="mat-itu_concrete">
+		<bsdf type="diffuse">
+			<rgb value="0.539479 0.539479 0.539480" name="reflectance" />
+		</bsdf>
+	</bsdf>
+	<bsdf type="twosided" id="mat-itu_marble">
+		<bsdf type="diffuse">
+			<rgb value="0.701101 0.644479 0.485150" name="reflectance" />
+		</bsdf>
+	</bsdf>
+
+	<shape type="ply" id="Ground" name="Ground">
+		<string name="filename" value="meshes/ground_220m.ply" />
+		<boolean name="face_normals" value="true" />
+		<ref id="mat-itu_concrete" name="bsdf" />
+	</shape>
+	<shape type="ply" id="building_NE" name="building_NE">
+		<string name="filename" value="meshes/building_NE.ply" />
+		<boolean name="face_normals" value="true" />
+		<ref id="mat-itu_marble" name="bsdf" />
+	</shape>
+	<shape type="ply" id="building_NW" name="building_NW">
+		<string name="filename" value="meshes/building_NW.ply" />
+		<boolean name="face_normals" value="true" />
+		<ref id="mat-itu_marble" name="bsdf" />
+	</shape>
+	<shape type="ply" id="building_SE" name="building_SE">
+		<string name="filename" value="meshes/building_SE.ply" />
+		<boolean name="face_normals" value="true" />
+		<ref id="mat-itu_marble" name="bsdf" />
+	</shape>
+	<shape type="ply" id="building_SW" name="building_SW">
+		<string name="filename" value="meshes/building_SW.ply" />
+		<boolean name="face_normals" value="true" />
+		<ref id="mat-itu_marble" name="bsdf" />
+	</shape>
+	<shape type="ply" id="street_W_00" name="street_W_00">
+		<string name="filename" value="meshes/street_W_00.ply" />
+		<boolean name="face_normals" value="true" />
+		<ref id="mat-itu_concrete" name="bsdf" />
+	</shape>
+	<shape type="ply" id="street_W_01" name="street_W_01">
+		<string name="filename" value="meshes/street_W_01.ply" />
+		<boolean name="face_normals" value="true" />
+		<ref id="mat-itu_concrete" name="bsdf" />
+	</shape>
+	<shape type="ply" id="street_W_02" name="street_W_02">
+		<string name="filename" value="meshes/street_W_02.ply" />
+		<boolean name="face_normals" value="true" />
+		<ref id="mat-itu_concrete" name="bsdf" />
+	</shape>
+	<shape type="ply" id="street_E_03" name="street_E_03">
+		<string name="filename" value="meshes/street_E_03.ply" />
+		<boolean name="face_normals" value="true" />
+		<ref id="mat-itu_concrete" name="bsdf" />
+	</shape>
+	<shape type="ply" id="street_E_04" name="street_E_04">
+		<string name="filename" value="meshes/street_E_04.ply" />
+		<boolean name="face_normals" value="true" />
+		<ref id="mat-itu_concrete" name="bsdf" />
+	</shape>
+	<shape type="ply" id="street_E_05" name="street_E_05">
+		<string name="filename" value="meshes/street_E_05.ply" />
+		<boolean name="face_normals" value="true" />
+		<ref id="mat-itu_concrete" name="bsdf" />
+	</shape>
+	<shape type="ply" id="street_Se_06" name="street_Se_06">
+		<string name="filename" value="meshes/street_Se_06.ply" />
+		<boolean name="face_normals" value="true" />
+		<ref id="mat-itu_concrete" name="bsdf" />
+	</shape>
+	<shape type="ply" id="street_Ne_07" name="street_Ne_07">
+		<string name="filename" value="meshes/street_Ne_07.ply" />
+		<boolean name="face_normals" value="true" />
+		<ref id="mat-itu_concrete" name="bsdf" />
+	</shape>
+	<shape type="ply" id="footway_NS_WS" name="footway_NS_WS">
+		<string name="filename" value="meshes/footway_NS_WS.ply" />
+		<boolean name="face_normals" value="true" />
+		<ref id="mat-itu_concrete" name="bsdf" />
+	</shape>
+	<shape type="ply" id="footway_NS_WN" name="footway_NS_WN">
+		<string name="filename" value="meshes/footway_NS_WN.ply" />
+		<boolean name="face_normals" value="true" />
+		<ref id="mat-itu_concrete" name="bsdf" />
+	</shape>
+	<shape type="ply" id="footway_NS_ES" name="footway_NS_ES">
+		<string name="filename" value="meshes/footway_NS_ES.ply" />
+		<boolean name="face_normals" value="true" />
+		<ref id="mat-itu_concrete" name="bsdf" />
+	</shape>
+	<shape type="ply" id="footway_NS_EN" name="footway_NS_EN">
+		<string name="filename" value="meshes/footway_NS_EN.ply" />
+		<boolean name="face_normals" value="true" />
+		<ref id="mat-itu_concrete" name="bsdf" />
+	</shape>
+	<shape type="ply" id="footway_EW_SW" name="footway_EW_SW">
+		<string name="filename" value="meshes/footway_EW_SW.ply" />
+		<boolean name="face_normals" value="true" />
+		<ref id="mat-itu_concrete" name="bsdf" />
+	</shape>
+	<shape type="ply" id="footway_EW_SE" name="footway_EW_SE">
+		<string name="filename" value="meshes/footway_EW_SE.ply" />
+		<boolean name="face_normals" value="true" />
+		<ref id="mat-itu_concrete" name="bsdf" />
+	</shape>
+	<shape type="ply" id="footway_EW_NW" name="footway_EW_NW">
+		<string name="filename" value="meshes/footway_EW_NW.ply" />
+		<boolean name="face_normals" value="true" />
+		<ref id="mat-itu_concrete" name="bsdf" />
+	</shape>
+	<shape type="ply" id="footway_EW_NE" name="footway_EW_NE">
+		<string name="filename" value="meshes/footway_EW_NE.ply" />
+		<boolean name="face_normals" value="true" />
+		<ref id="mat-itu_concrete" name="bsdf" />
+	</shape>
+
+</scene>

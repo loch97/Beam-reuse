@@ -1,0 +1,2023 @@
+{
+  "design": {
+    "sionna_version": "2.0.1",
+    "standard_table": "3GPP TS 38.214 PDSCH table 2",
+    "scope": "NR LDPC coded AWGN code-block BLER, not PDSCH transport-block BLER",
+    "info_bits": 1024,
+    "decoder_iterations": 10,
+    "target_bler": 0.1,
+    "evm_rms": 0.035,
+    "evm_model": "effective linear SINR = 1/(1/raw linear SNR + EVM^2)",
+    "seed": 20270929,
+    "blocks_per_search_point": 128,
+    "blocks_final_check": 512,
+    "steps": 8,
+    "caution": "Search noise and code-block/TB distinction require independent validation before paper-level BLER claims.",
+    "threshold_estimator": "binomial maximum-likelihood logistic fit over all search and check points; requested BLER crossing",
+    "fit_source": "results\\paper_icc\\mcs_awgn_calibration_20260929.json"
+  },
+  "rows": [
+    {
+      "mcs_index": 2,
+      "modulation_order": 2,
+      "target_coderate": 0.30078125,
+      "spectral_efficiency": 0.6015625,
+      "effective_snr_bracket_db": [
+        -0.792,
+        -0.632
+      ],
+      "raw_snr_upper_db_at_evm": -0.6273979590189434,
+      "upper_check_bler": 0.05078125,
+      "points": [
+        {
+          "effective_snr_db": 12.5,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 2.25,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": -2.875,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": -0.312,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": -1.593,
+          "blocks": 128,
+          "block_errors": 123,
+          "bler": 0.9609375
+        },
+        {
+          "effective_snr_db": -0.953,
+          "blocks": 128,
+          "block_errors": 36,
+          "bler": 0.28125
+        },
+        {
+          "effective_snr_db": -0.632,
+          "blocks": 128,
+          "block_errors": 9,
+          "bler": 0.0703125
+        },
+        {
+          "effective_snr_db": -0.792,
+          "blocks": 128,
+          "block_errors": 19,
+          "bler": 0.1484375
+        },
+        {
+          "effective_snr_db": -0.632,
+          "blocks": 512,
+          "block_errors": 26,
+          "bler": 0.05078125
+        }
+      ],
+      "effective_snr_threshold_db": -0.7406006411390083,
+      "bler_logistic_fit": {
+        "midpoint_db": -1.0885392945110843,
+        "scale_db": 0.1583537053794909,
+        "threshold_db": -0.7406006411390083,
+        "negative_log_likelihood": 287.83976074377085,
+        "converged": true
+      },
+      "raw_snr_threshold_db_at_evm": -0.7361123116294616
+    },
+    {
+      "mcs_index": 3,
+      "modulation_order": 2,
+      "target_coderate": 0.4384765625,
+      "spectral_efficiency": 0.876953125,
+      "effective_snr_bracket_db": [
+        1.129,
+        1.289
+      ],
+      "raw_snr_upper_db_at_evm": 1.2961643792885924,
+      "upper_check_bler": 0.091796875,
+      "points": [
+        {
+          "effective_snr_db": 12.5,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 2.25,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": -2.875,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": -0.312,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": 0.969,
+          "blocks": 128,
+          "block_errors": 64,
+          "bler": 0.5
+        },
+        {
+          "effective_snr_db": 1.609,
+          "blocks": 128,
+          "block_errors": 1,
+          "bler": 0.0078125
+        },
+        {
+          "effective_snr_db": 1.289,
+          "blocks": 128,
+          "block_errors": 12,
+          "bler": 0.09375
+        },
+        {
+          "effective_snr_db": 1.129,
+          "blocks": 128,
+          "block_errors": 35,
+          "bler": 0.2734375
+        },
+        {
+          "effective_snr_db": 1.289,
+          "blocks": 512,
+          "block_errors": 47,
+          "bler": 0.091796875
+        }
+      ],
+      "effective_snr_threshold_db": 1.2790224575641744,
+      "bler_logistic_fit": {
+        "midpoint_db": 0.9773101600410921,
+        "scale_db": 0.1373151841806084,
+        "threshold_db": 1.2790224575641744,
+        "negative_log_likelihood": 366.8305447729463,
+        "converged": true
+      },
+      "raw_snr_threshold_db_at_evm": 1.286170382662843
+    },
+    {
+      "mcs_index": 4,
+      "modulation_order": 2,
+      "target_coderate": 0.587890625,
+      "spectral_efficiency": 1.17578125,
+      "effective_snr_bracket_db": [
+        3.051,
+        3.211
+      ],
+      "raw_snr_upper_db_at_evm": 3.22215778965872,
+      "upper_check_bler": 0.033203125,
+      "points": [
+        {
+          "effective_snr_db": 12.5,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 2.25,
+          "blocks": 128,
+          "block_errors": 124,
+          "bler": 0.96875
+        },
+        {
+          "effective_snr_db": 7.375,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 4.812,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 3.531,
+          "blocks": 128,
+          "block_errors": 1,
+          "bler": 0.0078125
+        },
+        {
+          "effective_snr_db": 2.891,
+          "blocks": 128,
+          "block_errors": 34,
+          "bler": 0.265625
+        },
+        {
+          "effective_snr_db": 3.211,
+          "blocks": 128,
+          "block_errors": 2,
+          "bler": 0.015625
+        },
+        {
+          "effective_snr_db": 3.051,
+          "blocks": 128,
+          "block_errors": 18,
+          "bler": 0.140625
+        },
+        {
+          "effective_snr_db": 3.211,
+          "blocks": 512,
+          "block_errors": 17,
+          "bler": 0.033203125
+        }
+      ],
+      "effective_snr_threshold_db": 3.058899683505039,
+      "bler_logistic_fit": {
+        "midpoint_db": 2.750218418288851,
+        "scale_db": 0.14048689806228837,
+        "threshold_db": 3.058899683505039,
+        "negative_log_likelihood": 236.69967756433743,
+        "converged": true
+      },
+      "raw_snr_threshold_db_at_evm": 3.0696729876864053
+    },
+    {
+      "mcs_index": 5,
+      "modulation_order": 4,
+      "target_coderate": 0.369140625,
+      "spectral_efficiency": 1.4765625,
+      "effective_snr_bracket_db": [
+        4.973,
+        5.133
+      ],
+      "raw_snr_upper_db_at_evm": 5.150381577493977,
+      "upper_check_bler": 0.072265625,
+      "points": [
+        {
+          "effective_snr_db": 12.5,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 2.25,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": 7.375,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 4.812,
+          "blocks": 128,
+          "block_errors": 45,
+          "bler": 0.3515625
+        },
+        {
+          "effective_snr_db": 6.094,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 5.453,
+          "blocks": 128,
+          "block_errors": 2,
+          "bler": 0.015625
+        },
+        {
+          "effective_snr_db": 5.133,
+          "blocks": 128,
+          "block_errors": 7,
+          "bler": 0.0546875
+        },
+        {
+          "effective_snr_db": 4.973,
+          "blocks": 128,
+          "block_errors": 19,
+          "bler": 0.1484375
+        },
+        {
+          "effective_snr_db": 5.133,
+          "blocks": 512,
+          "block_errors": 37,
+          "bler": 0.072265625
+        }
+      ],
+      "effective_snr_threshold_db": 5.066128037789458,
+      "bler_logistic_fit": {
+        "midpoint_db": 4.702062203102219,
+        "scale_db": 0.1656935019034832,
+        "threshold_db": 5.066128037789458,
+        "negative_log_likelihood": 307.61191080942547,
+        "converged": true
+      },
+      "raw_snr_threshold_db_at_evm": 5.083243502523143
+    },
+    {
+      "mcs_index": 6,
+      "modulation_order": 4,
+      "target_coderate": 0.423828125,
+      "spectral_efficiency": 1.6953125,
+      "effective_snr_bracket_db": [
+        5.934,
+        6.094
+      ],
+      "raw_snr_upper_db_at_evm": 6.115697255899846,
+      "upper_check_bler": 0.041015625,
+      "points": [
+        {
+          "effective_snr_db": 12.5,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 2.25,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": 7.375,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 4.812,
+          "blocks": 128,
+          "block_errors": 127,
+          "bler": 0.9921875
+        },
+        {
+          "effective_snr_db": 6.094,
+          "blocks": 128,
+          "block_errors": 8,
+          "bler": 0.0625
+        },
+        {
+          "effective_snr_db": 5.453,
+          "blocks": 128,
+          "block_errors": 86,
+          "bler": 0.671875
+        },
+        {
+          "effective_snr_db": 5.774,
+          "blocks": 128,
+          "block_errors": 22,
+          "bler": 0.171875
+        },
+        {
+          "effective_snr_db": 5.934,
+          "blocks": 128,
+          "block_errors": 18,
+          "bler": 0.140625
+        },
+        {
+          "effective_snr_db": 6.094,
+          "blocks": 512,
+          "block_errors": 21,
+          "bler": 0.041015625
+        }
+      ],
+      "effective_snr_threshold_db": 5.943133786424115,
+      "bler_logistic_fit": {
+        "midpoint_db": 5.566870563612087,
+        "scale_db": 0.17124477247027056,
+        "threshold_db": 5.943133786424115,
+        "negative_log_likelihood": 317.8829374505842,
+        "converged": true
+      },
+      "raw_snr_threshold_db_at_evm": 5.964088469242952
+    },
+    {
+      "mcs_index": 7,
+      "modulation_order": 4,
+      "target_coderate": 0.478515625,
+      "spectral_efficiency": 1.9140625,
+      "effective_snr_bracket_db": [
+        6.895,
+        7.055
+      ],
+      "raw_snr_upper_db_at_evm": 7.082087822012736,
+      "upper_check_bler": 0.044921875,
+      "points": [
+        {
+          "effective_snr_db": 12.5,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 2.25,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": 7.375,
+          "blocks": 128,
+          "block_errors": 1,
+          "bler": 0.0078125
+        },
+        {
+          "effective_snr_db": 4.812,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": 6.094,
+          "blocks": 128,
+          "block_errors": 106,
+          "bler": 0.828125
+        },
+        {
+          "effective_snr_db": 6.735,
+          "blocks": 128,
+          "block_errors": 26,
+          "bler": 0.203125
+        },
+        {
+          "effective_snr_db": 7.055,
+          "blocks": 128,
+          "block_errors": 7,
+          "bler": 0.0546875
+        },
+        {
+          "effective_snr_db": 6.895,
+          "blocks": 128,
+          "block_errors": 20,
+          "bler": 0.15625
+        },
+        {
+          "effective_snr_db": 7.055,
+          "blocks": 512,
+          "block_errors": 23,
+          "bler": 0.044921875
+        }
+      ],
+      "effective_snr_threshold_db": 6.911870147788223,
+      "bler_logistic_fit": {
+        "midpoint_db": 6.444684916068346,
+        "scale_db": 0.2126251620060902,
+        "threshold_db": 6.911870147788223,
+        "negative_log_likelihood": 307.7133928071323,
+        "converged": true
+      },
+      "raw_snr_threshold_db_at_evm": 6.93807713551057
+    },
+    {
+      "mcs_index": 8,
+      "modulation_order": 4,
+      "target_coderate": 0.5400390625,
+      "spectral_efficiency": 2.16015625,
+      "effective_snr_bracket_db": [
+        7.856,
+        8.016
+      ],
+      "raw_snr_upper_db_at_evm": 8.04982286918488,
+      "upper_check_bler": 0.064453125,
+      "points": [
+        {
+          "effective_snr_db": 12.5,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 2.25,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": 7.375,
+          "blocks": 128,
+          "block_errors": 92,
+          "bler": 0.71875
+        },
+        {
+          "effective_snr_db": 9.938,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 8.657,
+          "blocks": 128,
+          "block_errors": 1,
+          "bler": 0.0078125
+        },
+        {
+          "effective_snr_db": 8.016,
+          "blocks": 128,
+          "block_errors": 7,
+          "bler": 0.0546875
+        },
+        {
+          "effective_snr_db": 7.696,
+          "blocks": 128,
+          "block_errors": 32,
+          "bler": 0.25
+        },
+        {
+          "effective_snr_db": 7.856,
+          "blocks": 128,
+          "block_errors": 16,
+          "bler": 0.125
+        },
+        {
+          "effective_snr_db": 8.016,
+          "blocks": 512,
+          "block_errors": 33,
+          "bler": 0.064453125
+        }
+      ],
+      "effective_snr_threshold_db": 7.918276470750261,
+      "bler_logistic_fit": {
+        "midpoint_db": 7.524022796310164,
+        "scale_db": 0.17943257985857142,
+        "threshold_db": 7.918276470750261,
+        "negative_log_likelihood": 352.90738317063233,
+        "converged": true
+      },
+      "raw_snr_threshold_db_at_evm": 7.951343895143095
+    },
+    {
+      "mcs_index": 9,
+      "modulation_order": 4,
+      "target_coderate": 0.6015625,
+      "spectral_efficiency": 2.40625,
+      "effective_snr_bracket_db": [
+        8.817,
+        8.977
+      ],
+      "raw_snr_upper_db_at_evm": 9.01924066252435,
+      "upper_check_bler": 0.083984375,
+      "points": [
+        {
+          "effective_snr_db": 12.5,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 2.25,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": 7.375,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": 9.938,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 8.657,
+          "blocks": 128,
+          "block_errors": 27,
+          "bler": 0.2109375
+        },
+        {
+          "effective_snr_db": 9.297,
+          "blocks": 128,
+          "block_errors": 1,
+          "bler": 0.0078125
+        },
+        {
+          "effective_snr_db": 8.977,
+          "blocks": 128,
+          "block_errors": 11,
+          "bler": 0.0859375
+        },
+        {
+          "effective_snr_db": 8.817,
+          "blocks": 128,
+          "block_errors": 14,
+          "bler": 0.109375
+        },
+        {
+          "effective_snr_db": 8.977,
+          "blocks": 512,
+          "block_errors": 43,
+          "bler": 0.083984375
+        }
+      ],
+      "effective_snr_threshold_db": 8.894753363066782,
+      "bler_logistic_fit": {
+        "midpoint_db": 8.418148372328403,
+        "scale_db": 0.2169122790880963,
+        "threshold_db": 8.894753363066782,
+        "negative_log_likelihood": 304.55323989451557,
+        "converged": true
+      },
+      "raw_snr_threshold_db_at_evm": 8.936197806383433
+    },
+    {
+      "mcs_index": 10,
+      "modulation_order": 4,
+      "target_coderate": 0.642578125,
+      "spectral_efficiency": 2.5703125,
+      "effective_snr_bracket_db": [
+        9.297,
+        9.457
+      ],
+      "raw_snr_upper_db_at_evm": 9.504203962902027,
+      "upper_check_bler": 0.119140625,
+      "points": [
+        {
+          "effective_snr_db": 12.5,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 2.25,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": 7.375,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": 9.938,
+          "blocks": 128,
+          "block_errors": 2,
+          "bler": 0.015625
+        },
+        {
+          "effective_snr_db": 8.657,
+          "blocks": 128,
+          "block_errors": 116,
+          "bler": 0.90625
+        },
+        {
+          "effective_snr_db": 9.297,
+          "blocks": 128,
+          "block_errors": 30,
+          "bler": 0.234375
+        },
+        {
+          "effective_snr_db": 9.617,
+          "blocks": 128,
+          "block_errors": 5,
+          "bler": 0.0390625
+        },
+        {
+          "effective_snr_db": 9.457,
+          "blocks": 128,
+          "block_errors": 11,
+          "bler": 0.0859375
+        },
+        {
+          "effective_snr_db": 9.457,
+          "blocks": 512,
+          "block_errors": 61,
+          "bler": 0.119140625
+        }
+      ],
+      "effective_snr_threshold_db": 9.480920965766625,
+      "bler_logistic_fit": {
+        "midpoint_db": 9.074896401605574,
+        "scale_db": 0.18478974263672676,
+        "threshold_db": 9.480920965766625,
+        "negative_log_likelihood": 366.4714455259432,
+        "converged": true
+      },
+      "raw_snr_threshold_db_at_evm": 9.528387075672914
+    },
+    {
+      "mcs_index": 11,
+      "modulation_order": 6,
+      "target_coderate": 0.455078125,
+      "spectral_efficiency": 2.73046875,
+      "effective_snr_bracket_db": [
+        10.579,
+        10.739
+      ],
+      "raw_snr_upper_db_at_evm": 10.802532088461824,
+      "upper_check_bler": 0.083984375,
+      "points": [
+        {
+          "effective_snr_db": 12.5,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 2.25,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": 7.375,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": 9.938,
+          "blocks": 128,
+          "block_errors": 98,
+          "bler": 0.765625
+        },
+        {
+          "effective_snr_db": 11.219,
+          "blocks": 128,
+          "block_errors": 1,
+          "bler": 0.0078125
+        },
+        {
+          "effective_snr_db": 10.579,
+          "blocks": 128,
+          "block_errors": 24,
+          "bler": 0.1875
+        },
+        {
+          "effective_snr_db": 10.899,
+          "blocks": 128,
+          "block_errors": 2,
+          "bler": 0.015625
+        },
+        {
+          "effective_snr_db": 10.739,
+          "blocks": 128,
+          "block_errors": 8,
+          "bler": 0.0625
+        },
+        {
+          "effective_snr_db": 10.739,
+          "blocks": 512,
+          "block_errors": 43,
+          "bler": 0.083984375
+        }
+      ],
+      "effective_snr_threshold_db": 10.683431039200325,
+      "bler_logistic_fit": {
+        "midpoint_db": 10.209028238147452,
+        "scale_db": 0.21591001936998644,
+        "threshold_db": 10.683431039200325,
+        "negative_log_likelihood": 327.40879067372026,
+        "converged": true
+      },
+      "raw_snr_threshold_db_at_evm": 10.746149538027282
+    },
+    {
+      "mcs_index": 12,
+      "modulation_order": 6,
+      "target_coderate": 0.5048828125,
+      "spectral_efficiency": 3.029296875,
+      "effective_snr_bracket_db": [
+        11.54,
+        11.7
+      ],
+      "raw_snr_upper_db_at_evm": 11.779411781475455,
+      "upper_check_bler": 0.10546875,
+      "points": [
+        {
+          "effective_snr_db": 12.5,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 2.25,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": 7.375,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": 9.938,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": 11.219,
+          "blocks": 128,
+          "block_errors": 47,
+          "bler": 0.3671875
+        },
+        {
+          "effective_snr_db": 11.86,
+          "blocks": 128,
+          "block_errors": 6,
+          "bler": 0.046875
+        },
+        {
+          "effective_snr_db": 11.54,
+          "blocks": 128,
+          "block_errors": 17,
+          "bler": 0.1328125
+        },
+        {
+          "effective_snr_db": 11.7,
+          "blocks": 128,
+          "block_errors": 9,
+          "bler": 0.0703125
+        },
+        {
+          "effective_snr_db": 11.7,
+          "blocks": 512,
+          "block_errors": 54,
+          "bler": 0.10546875
+        }
+      ],
+      "effective_snr_threshold_db": 11.665492901817306,
+      "bler_logistic_fit": {
+        "midpoint_db": 11.116860924306568,
+        "scale_db": 0.24969317345606312,
+        "threshold_db": 11.665492901817306,
+        "negative_log_likelihood": 366.9263889841015,
+        "converged": true
+      },
+      "raw_snr_threshold_db_at_evm": 11.744270478115155
+    },
+    {
+      "mcs_index": 13,
+      "modulation_order": 6,
+      "target_coderate": 0.5537109375,
+      "spectral_efficiency": 3.322265625,
+      "effective_snr_bracket_db": [
+        12.5,
+        12.66
+      ],
+      "raw_snr_upper_db_at_evm": 12.759283046574001,
+      "upper_check_bler": 0.076171875,
+      "points": [
+        {
+          "effective_snr_db": 12.5,
+          "blocks": 128,
+          "block_errors": 25,
+          "bler": 0.1953125
+        },
+        {
+          "effective_snr_db": 22.75,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 17.625,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 15.062,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 13.781,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 13.14,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 12.82,
+          "blocks": 128,
+          "block_errors": 5,
+          "bler": 0.0390625
+        },
+        {
+          "effective_snr_db": 12.66,
+          "blocks": 128,
+          "block_errors": 9,
+          "bler": 0.0703125
+        },
+        {
+          "effective_snr_db": 12.66,
+          "blocks": 512,
+          "block_errors": 39,
+          "bler": 0.076171875
+        }
+      ],
+      "effective_snr_threshold_db": 12.616435441537446,
+      "bler_logistic_fit": {
+        "midpoint_db": 12.286865241437384,
+        "scale_db": 0.1499938620291657,
+        "threshold_db": 12.616435441537446,
+        "negative_log_likelihood": 255.5308445505958,
+        "converged": true
+      },
+      "raw_snr_threshold_db_at_evm": 12.714716249361377
+    },
+    {
+      "mcs_index": 14,
+      "modulation_order": 6,
+      "target_coderate": 0.6015625,
+      "spectral_efficiency": 3.609375,
+      "effective_snr_bracket_db": [
+        13.46,
+        13.62
+      ],
+      "raw_snr_upper_db_at_evm": 13.744198260730254,
+      "upper_check_bler": 0.107421875,
+      "points": [
+        {
+          "effective_snr_db": 12.5,
+          "blocks": 128,
+          "block_errors": 122,
+          "bler": 0.953125
+        },
+        {
+          "effective_snr_db": 22.75,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 17.625,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 15.062,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 13.781,
+          "blocks": 128,
+          "block_errors": 6,
+          "bler": 0.046875
+        },
+        {
+          "effective_snr_db": 13.14,
+          "blocks": 128,
+          "block_errors": 58,
+          "bler": 0.453125
+        },
+        {
+          "effective_snr_db": 13.46,
+          "blocks": 128,
+          "block_errors": 27,
+          "bler": 0.2109375
+        },
+        {
+          "effective_snr_db": 13.62,
+          "blocks": 128,
+          "block_errors": 8,
+          "bler": 0.0625
+        },
+        {
+          "effective_snr_db": 13.62,
+          "blocks": 512,
+          "block_errors": 55,
+          "bler": 0.107421875
+        }
+      ],
+      "effective_snr_threshold_db": 13.616409643289126,
+      "bler_logistic_fit": {
+        "midpoint_db": 13.127471964140954,
+        "scale_db": 0.22252512746827624,
+        "threshold_db": 13.616409643289126,
+        "negative_log_likelihood": 409.1314330752298,
+        "converged": true
+      },
+      "raw_snr_threshold_db_at_evm": 13.740503790098392
+    },
+    {
+      "mcs_index": 15,
+      "modulation_order": 6,
+      "target_coderate": 0.650390625,
+      "spectral_efficiency": 3.90234375,
+      "effective_snr_bracket_db": [
+        14.421,
+        14.581
+      ],
+      "raw_snr_upper_db_at_evm": 14.736515241453752,
+      "upper_check_bler": 0.1015625,
+      "points": [
+        {
+          "effective_snr_db": 12.5,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": 22.75,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 17.625,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 15.062,
+          "blocks": 128,
+          "block_errors": 2,
+          "bler": 0.015625
+        },
+        {
+          "effective_snr_db": 13.781,
+          "blocks": 128,
+          "block_errors": 86,
+          "bler": 0.671875
+        },
+        {
+          "effective_snr_db": 14.421,
+          "blocks": 128,
+          "block_errors": 17,
+          "bler": 0.1328125
+        },
+        {
+          "effective_snr_db": 14.741,
+          "blocks": 128,
+          "block_errors": 8,
+          "bler": 0.0625
+        },
+        {
+          "effective_snr_db": 14.581,
+          "blocks": 128,
+          "block_errors": 10,
+          "bler": 0.078125
+        },
+        {
+          "effective_snr_db": 14.581,
+          "blocks": 512,
+          "block_errors": 52,
+          "bler": 0.1015625
+        }
+      ],
+      "effective_snr_threshold_db": 14.560931784358155,
+      "bler_logistic_fit": {
+        "midpoint_db": 13.9762914326647,
+        "scale_db": 0.2660812907901462,
+        "threshold_db": 14.560931784358155,
+        "negative_log_likelihood": 375.9668289363825,
+        "converged": true
+      },
+      "raw_snr_threshold_db_at_evm": 14.715717136754748
+    },
+    {
+      "mcs_index": 16,
+      "modulation_order": 6,
+      "target_coderate": 0.7021484375,
+      "spectral_efficiency": 4.212890625,
+      "effective_snr_bracket_db": [
+        15.223,
+        15.383
+      ],
+      "raw_snr_upper_db_at_evm": 15.570747409166694,
+      "upper_check_bler": 0.05078125,
+      "points": [
+        {
+          "effective_snr_db": 12.5,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": 22.75,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 17.625,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 15.062,
+          "blocks": 128,
+          "block_errors": 22,
+          "bler": 0.171875
+        },
+        {
+          "effective_snr_db": 16.343,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 15.703,
+          "blocks": 128,
+          "block_errors": 1,
+          "bler": 0.0078125
+        },
+        {
+          "effective_snr_db": 15.383,
+          "blocks": 128,
+          "block_errors": 3,
+          "bler": 0.0234375
+        },
+        {
+          "effective_snr_db": 15.223,
+          "blocks": 128,
+          "block_errors": 13,
+          "bler": 0.1015625
+        },
+        {
+          "effective_snr_db": 15.383,
+          "blocks": 512,
+          "block_errors": 26,
+          "bler": 0.05078125
+        }
+      ],
+      "effective_snr_threshold_db": 15.204237709234157,
+      "bler_logistic_fit": {
+        "midpoint_db": 14.746802735902989,
+        "scale_db": 0.20818762817851524,
+        "threshold_db": 15.204237709234157,
+        "negative_log_likelihood": 224.8871441914214,
+        "converged": true
+      },
+      "raw_snr_threshold_db_at_evm": 15.384254883061981
+    },
+    {
+      "mcs_index": 17,
+      "modulation_order": 6,
+      "target_coderate": 0.75390625,
+      "spectral_efficiency": 4.5234375,
+      "effective_snr_bracket_db": [
+        16.183,
+        16.343
+      ],
+      "raw_snr_upper_db_at_evm": 16.57847285372998,
+      "upper_check_bler": 0.072265625,
+      "points": [
+        {
+          "effective_snr_db": 12.5,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": 22.75,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 17.625,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 15.062,
+          "blocks": 128,
+          "block_errors": 126,
+          "bler": 0.984375
+        },
+        {
+          "effective_snr_db": 16.343,
+          "blocks": 128,
+          "block_errors": 7,
+          "bler": 0.0546875
+        },
+        {
+          "effective_snr_db": 15.703,
+          "blocks": 128,
+          "block_errors": 73,
+          "bler": 0.5703125
+        },
+        {
+          "effective_snr_db": 16.023,
+          "blocks": 128,
+          "block_errors": 37,
+          "bler": 0.2890625
+        },
+        {
+          "effective_snr_db": 16.183,
+          "blocks": 128,
+          "block_errors": 17,
+          "bler": 0.1328125
+        },
+        {
+          "effective_snr_db": 16.343,
+          "blocks": 512,
+          "block_errors": 37,
+          "bler": 0.072265625
+        }
+      ],
+      "effective_snr_threshold_db": 16.257849139083003,
+      "bler_logistic_fit": {
+        "midpoint_db": 15.798755749410581,
+        "scale_db": 0.20894240598245875,
+        "threshold_db": 16.257849139083003,
+        "negative_log_likelihood": 386.46618502523233,
+        "converged": true
+      },
+      "raw_snr_threshold_db_at_evm": 16.488626436734236
+    },
+    {
+      "mcs_index": 18,
+      "modulation_order": 6,
+      "target_coderate": 0.802734375,
+      "spectral_efficiency": 4.81640625,
+      "effective_snr_bracket_db": [
+        16.984,
+        17.145
+      ],
+      "raw_snr_upper_db_at_evm": 17.429828873278268,
+      "upper_check_bler": 0.115234375,
+      "points": [
+        {
+          "effective_snr_db": 12.5,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": 22.75,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 17.625,
+          "blocks": 128,
+          "block_errors": 1,
+          "bler": 0.0078125
+        },
+        {
+          "effective_snr_db": 15.062,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": 16.343,
+          "blocks": 128,
+          "block_errors": 104,
+          "bler": 0.8125
+        },
+        {
+          "effective_snr_db": 16.984,
+          "blocks": 128,
+          "block_errors": 24,
+          "bler": 0.1875
+        },
+        {
+          "effective_snr_db": 17.305,
+          "blocks": 128,
+          "block_errors": 7,
+          "bler": 0.0546875
+        },
+        {
+          "effective_snr_db": 17.145,
+          "blocks": 128,
+          "block_errors": 9,
+          "bler": 0.0703125
+        },
+        {
+          "effective_snr_db": 17.145,
+          "blocks": 512,
+          "block_errors": 59,
+          "bler": 0.115234375
+        }
+      ],
+      "effective_snr_threshold_db": 17.154086109440744,
+      "bler_logistic_fit": {
+        "midpoint_db": 16.670399593097475,
+        "scale_db": 0.22013522028306307,
+        "threshold_db": 17.154086109440744,
+        "negative_log_likelihood": 373.525260556096,
+        "converged": true
+      },
+      "raw_snr_threshold_db_at_evm": 17.439531552381965
+    },
+    {
+      "mcs_index": 19,
+      "modulation_order": 6,
+      "target_coderate": 0.8525390625,
+      "spectral_efficiency": 5.115234375,
+      "effective_snr_bracket_db": [
+        18.105,
+        18.266
+      ],
+      "raw_snr_upper_db_at_evm": 18.63839792565006,
+      "upper_check_bler": 0.08203125,
+      "points": [
+        {
+          "effective_snr_db": 12.5,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": 22.75,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 17.625,
+          "blocks": 128,
+          "block_errors": 77,
+          "bler": 0.6015625
+        },
+        {
+          "effective_snr_db": 20.188,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 18.907,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 18.266,
+          "blocks": 128,
+          "block_errors": 6,
+          "bler": 0.046875
+        },
+        {
+          "effective_snr_db": 17.945,
+          "blocks": 128,
+          "block_errors": 35,
+          "bler": 0.2734375
+        },
+        {
+          "effective_snr_db": 18.105,
+          "blocks": 128,
+          "block_errors": 18,
+          "bler": 0.140625
+        },
+        {
+          "effective_snr_db": 18.266,
+          "blocks": 512,
+          "block_errors": 42,
+          "bler": 0.08203125
+        }
+      ],
+      "effective_snr_threshold_db": 18.19493674591866,
+      "bler_logistic_fit": {
+        "midpoint_db": 17.721799731165998,
+        "scale_db": 0.21533393519849628,
+        "threshold_db": 18.19493674591866,
+        "negative_log_likelihood": 384.22045527601915,
+        "converged": true
+      },
+      "raw_snr_threshold_db_at_evm": 18.561028622968315
+    },
+    {
+      "mcs_index": 20,
+      "modulation_order": 8,
+      "target_coderate": 0.66650390625,
+      "spectral_efficiency": 5.33203125,
+      "effective_snr_bracket_db": [
+        19.387,
+        19.547
+      ],
+      "raw_snr_upper_db_at_evm": 20.05488725105957,
+      "upper_check_bler": 0.087890625,
+      "points": [
+        {
+          "effective_snr_db": 12.5,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": 22.75,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 17.625,
+          "blocks": 128,
+          "block_errors": 127,
+          "bler": 0.9921875
+        },
+        {
+          "effective_snr_db": 20.188,
+          "blocks": 128,
+          "block_errors": 1,
+          "bler": 0.0078125
+        },
+        {
+          "effective_snr_db": 18.907,
+          "blocks": 128,
+          "block_errors": 63,
+          "bler": 0.4921875
+        },
+        {
+          "effective_snr_db": 19.547,
+          "blocks": 128,
+          "block_errors": 9,
+          "bler": 0.0703125
+        },
+        {
+          "effective_snr_db": 19.227,
+          "blocks": 128,
+          "block_errors": 30,
+          "bler": 0.234375
+        },
+        {
+          "effective_snr_db": 19.387,
+          "blocks": 128,
+          "block_errors": 25,
+          "bler": 0.1953125
+        },
+        {
+          "effective_snr_db": 19.547,
+          "blocks": 512,
+          "block_errors": 45,
+          "bler": 0.087890625
+        }
+      ],
+      "effective_snr_threshold_db": 19.513478239665567,
+      "bler_logistic_fit": {
+        "midpoint_db": 18.912760284348295,
+        "scale_db": 0.27339852353442495,
+        "threshold_db": 19.513478239665567,
+        "negative_log_likelihood": 419.62578131913034,
+        "converged": true
+      },
+      "raw_snr_threshold_db_at_evm": 20.017224830722974
+    },
+    {
+      "mcs_index": 21,
+      "modulation_order": 8,
+      "target_coderate": 0.6943359375,
+      "spectral_efficiency": 5.5546875,
+      "effective_snr_bracket_db": [
+        19.707,
+        19.867
+      ],
+      "raw_snr_upper_db_at_evm": 20.416281604646418,
+      "upper_check_bler": 0.10546875,
+      "points": [
+        {
+          "effective_snr_db": 12.5,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": 22.75,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 17.625,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": 20.188,
+          "blocks": 128,
+          "block_errors": 5,
+          "bler": 0.0390625
+        },
+        {
+          "effective_snr_db": 18.907,
+          "blocks": 128,
+          "block_errors": 108,
+          "bler": 0.84375
+        },
+        {
+          "effective_snr_db": 19.547,
+          "blocks": 128,
+          "block_errors": 32,
+          "bler": 0.25
+        },
+        {
+          "effective_snr_db": 19.867,
+          "blocks": 128,
+          "block_errors": 9,
+          "bler": 0.0703125
+        },
+        {
+          "effective_snr_db": 19.707,
+          "blocks": 128,
+          "block_errors": 14,
+          "bler": 0.109375
+        },
+        {
+          "effective_snr_db": 19.867,
+          "blocks": 512,
+          "block_errors": 54,
+          "bler": 0.10546875
+        }
+      ],
+      "effective_snr_threshold_db": 19.840544559324638,
+      "bler_logistic_fit": {
+        "midpoint_db": 19.296577440491316,
+        "scale_db": 0.24757010477863625,
+        "threshold_db": 19.840544559324638,
+        "negative_log_likelihood": 400.86148416775984,
+        "converged": true
+      },
+      "raw_snr_threshold_db_at_evm": 20.38627165666512
+    },
+    {
+      "mcs_index": 22,
+      "modulation_order": 8,
+      "target_coderate": 0.736328125,
+      "spectral_efficiency": 5.890625,
+      "effective_snr_bracket_db": [
+        20.828,
+        20.988
+      ],
+      "raw_snr_upper_db_at_evm": 21.713232991812088,
+      "upper_check_bler": 0.099609375,
+      "points": [
+        {
+          "effective_snr_db": 12.5,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": 22.75,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 17.625,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": 20.188,
+          "blocks": 128,
+          "block_errors": 94,
+          "bler": 0.734375
+        },
+        {
+          "effective_snr_db": 21.469,
+          "blocks": 128,
+          "block_errors": 2,
+          "bler": 0.015625
+        },
+        {
+          "effective_snr_db": 20.828,
+          "blocks": 128,
+          "block_errors": 23,
+          "bler": 0.1796875
+        },
+        {
+          "effective_snr_db": 21.148,
+          "blocks": 128,
+          "block_errors": 9,
+          "bler": 0.0703125
+        },
+        {
+          "effective_snr_db": 20.988,
+          "blocks": 128,
+          "block_errors": 10,
+          "bler": 0.078125
+        },
+        {
+          "effective_snr_db": 20.988,
+          "blocks": 512,
+          "block_errors": 51,
+          "bler": 0.099609375
+        }
+      ],
+      "effective_snr_threshold_db": 20.987308767732063,
+      "bler_logistic_fit": {
+        "midpoint_db": 20.439586830909974,
+        "scale_db": 0.24927899608974677,
+        "threshold_db": 20.987308767732063,
+        "negative_log_likelihood": 378.9880476161703,
+        "converged": true
+      },
+      "raw_snr_threshold_db_at_evm": 21.712416144241367
+    },
+    {
+      "mcs_index": 23,
+      "modulation_order": 8,
+      "target_coderate": 0.7783203125,
+      "spectral_efficiency": 6.2265625,
+      "effective_snr_bracket_db": [
+        21.79,
+        21.95
+      ],
+      "raw_snr_upper_db_at_evm": 22.875494072684077,
+      "upper_check_bler": 0.0703125,
+      "points": [
+        {
+          "effective_snr_db": 12.5,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": 22.75,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 17.625,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": 20.188,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": 21.469,
+          "blocks": 128,
+          "block_errors": 37,
+          "bler": 0.2890625
+        },
+        {
+          "effective_snr_db": 22.11,
+          "blocks": 128,
+          "block_errors": 4,
+          "bler": 0.03125
+        },
+        {
+          "effective_snr_db": 21.79,
+          "blocks": 128,
+          "block_errors": 20,
+          "bler": 0.15625
+        },
+        {
+          "effective_snr_db": 21.95,
+          "blocks": 128,
+          "block_errors": 5,
+          "bler": 0.0390625
+        },
+        {
+          "effective_snr_db": 21.95,
+          "blocks": 512,
+          "block_errors": 36,
+          "bler": 0.0703125
+        }
+      ],
+      "effective_snr_threshold_db": 21.830954559747326,
+      "bler_logistic_fit": {
+        "midpoint_db": 21.310259025777555,
+        "scale_db": 0.2369787500743465,
+        "threshold_db": 21.830954559747326,
+        "negative_log_likelihood": 305.5988969422996,
+        "converged": true
+      },
+      "raw_snr_threshold_db_at_evm": 22.72864709791421
+    },
+    {
+      "mcs_index": 24,
+      "modulation_order": 8,
+      "target_coderate": 0.8212890625,
+      "spectral_efficiency": 6.5703125,
+      "effective_snr_bracket_db": [
+        22.59,
+        22.75
+      ],
+      "raw_snr_upper_db_at_evm": 23.88930808978147,
+      "upper_check_bler": 0.15625,
+      "points": [
+        {
+          "effective_snr_db": 12.5,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": 22.75,
+          "blocks": 128,
+          "block_errors": 11,
+          "bler": 0.0859375
+        },
+        {
+          "effective_snr_db": 17.625,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": 20.188,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": 21.469,
+          "blocks": 128,
+          "block_errors": 125,
+          "bler": 0.9765625
+        },
+        {
+          "effective_snr_db": 22.11,
+          "blocks": 128,
+          "block_errors": 75,
+          "bler": 0.5859375
+        },
+        {
+          "effective_snr_db": 22.43,
+          "blocks": 128,
+          "block_errors": 57,
+          "bler": 0.4453125
+        },
+        {
+          "effective_snr_db": 22.59,
+          "blocks": 128,
+          "block_errors": 27,
+          "bler": 0.2109375
+        },
+        {
+          "effective_snr_db": 22.75,
+          "blocks": 512,
+          "block_errors": 80,
+          "bler": 0.15625
+        }
+      ],
+      "effective_snr_threshold_db": 22.855658789832912,
+      "bler_logistic_fit": {
+        "midpoint_db": 22.282921475110005,
+        "scale_db": 0.2606639852068553,
+        "threshold_db": 22.855658789832912,
+        "negative_log_likelihood": 520.9384654388645,
+        "converged": true
+      },
+      "raw_snr_threshold_db_at_evm": 24.027168316932574
+    },
+    {
+      "mcs_index": 25,
+      "modulation_order": 8,
+      "target_coderate": 0.8642578125,
+      "spectral_efficiency": 6.9140625,
+      "effective_snr_bracket_db": [
+        23.87,
+        24.031
+      ],
+      "raw_snr_upper_db_at_evm": 25.641944897953294,
+      "upper_check_bler": 0.029296875,
+      "points": [
+        {
+          "effective_snr_db": 12.5,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": 22.75,
+          "blocks": 128,
+          "block_errors": 118,
+          "bler": 0.921875
+        },
+        {
+          "effective_snr_db": 27.875,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 25.312,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 24.031,
+          "blocks": 128,
+          "block_errors": 5,
+          "bler": 0.0390625
+        },
+        {
+          "effective_snr_db": 23.39,
+          "blocks": 128,
+          "block_errors": 44,
+          "bler": 0.34375
+        },
+        {
+          "effective_snr_db": 23.71,
+          "blocks": 128,
+          "block_errors": 23,
+          "bler": 0.1796875
+        },
+        {
+          "effective_snr_db": 23.87,
+          "blocks": 128,
+          "block_errors": 20,
+          "bler": 0.15625
+        },
+        {
+          "effective_snr_db": 24.031,
+          "blocks": 512,
+          "block_errors": 15,
+          "bler": 0.029296875
+        }
+      ],
+      "effective_snr_threshold_db": 23.81678026208174,
+      "bler_logistic_fit": {
+        "midpoint_db": 23.296778645285244,
+        "scale_db": 0.236662934758773,
+        "threshold_db": 23.81678026208174,
+        "negative_log_likelihood": 328.7999932446659,
+        "converged": true
+      },
+      "raw_snr_threshold_db_at_evm": 25.334856031381786
+    },
+    {
+      "mcs_index": 26,
+      "modulation_order": 8,
+      "target_coderate": 0.89501953125,
+      "spectral_efficiency": 7.16015625,
+      "effective_snr_bracket_db": [
+        24.672,
+        24.832
+      ],
+      "raw_snr_upper_db_at_evm": 26.857108673340235,
+      "upper_check_bler": 0.056640625,
+      "points": [
+        {
+          "effective_snr_db": 12.5,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": 22.75,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": 27.875,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 25.312,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 24.031,
+          "blocks": 128,
+          "block_errors": 60,
+          "bler": 0.46875
+        },
+        {
+          "effective_snr_db": 24.672,
+          "blocks": 128,
+          "block_errors": 20,
+          "bler": 0.15625
+        },
+        {
+          "effective_snr_db": 24.992,
+          "blocks": 128,
+          "block_errors": 4,
+          "bler": 0.03125
+        },
+        {
+          "effective_snr_db": 24.832,
+          "blocks": 128,
+          "block_errors": 6,
+          "bler": 0.046875
+        },
+        {
+          "effective_snr_db": 24.832,
+          "blocks": 512,
+          "block_errors": 29,
+          "bler": 0.056640625
+        }
+      ],
+      "effective_snr_threshold_db": 24.661974181801593,
+      "bler_logistic_fit": {
+        "midpoint_db": 24.045501030913837,
+        "scale_db": 0.280569022050141,
+        "threshold_db": 24.661974181801593,
+        "negative_log_likelihood": 302.9031553384784,
+        "converged": true
+      },
+      "raw_snr_threshold_db_at_evm": 26.58913795566714
+    },
+    {
+      "mcs_index": 27,
+      "modulation_order": 8,
+      "target_coderate": 0.92578125,
+      "spectral_efficiency": 7.40625,
+      "effective_snr_bracket_db": [
+        25.633,
+        25.793
+      ],
+      "raw_snr_upper_db_at_evm": 28.509315608507436,
+      "upper_check_bler": 0.08203125,
+      "points": [
+        {
+          "effective_snr_db": 12.5,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": 22.75,
+          "blocks": 128,
+          "block_errors": 128,
+          "bler": 1.0
+        },
+        {
+          "effective_snr_db": 27.875,
+          "blocks": 128,
+          "block_errors": 0,
+          "bler": 0.0
+        },
+        {
+          "effective_snr_db": 25.312,
+          "blocks": 128,
+          "block_errors": 32,
+          "bler": 0.25
+        },
+        {
+          "effective_snr_db": 26.593,
+          "blocks": 128,
+          "block_errors": 1,
+          "bler": 0.0078125
+        },
+        {
+          "effective_snr_db": 25.953,
+          "blocks": 128,
+          "block_errors": 2,
+          "bler": 0.015625
+        },
+        {
+          "effective_snr_db": 25.633,
+          "blocks": 128,
+          "block_errors": 19,
+          "bler": 0.1484375
+        },
+        {
+          "effective_snr_db": 25.793,
+          "blocks": 128,
+          "block_errors": 7,
+          "bler": 0.0546875
+        },
+        {
+          "effective_snr_db": 25.793,
+          "blocks": 512,
+          "block_errors": 42,
+          "bler": 0.08203125
+        }
+      ],
+      "effective_snr_threshold_db": 25.68709748668083,
+      "bler_logistic_fit": {
+        "midpoint_db": 25.00698434751792,
+        "scale_db": 0.30953282890519807,
+        "threshold_db": 25.68709748668083,
+        "negative_log_likelihood": 317.4932957928869,
+        "converged": true
+      },
+      "raw_snr_threshold_db_at_evm": 28.31342554998801
+    }
+  ]
+}

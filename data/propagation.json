@@ -1,0 +1,171 @@
+{
+  "inventory": [
+    {
+      "object": "Ground",
+      "group": "ground",
+      "mesh": "results/v3/r20_physical_rt/scene/ground_220m.ply",
+      "itu_material": "concrete"
+    },
+    {
+      "object": "building_NE",
+      "group": "facade",
+      "mesh": "scenes/crossroad_v3/meshes/building_NE.ply",
+      "itu_material": "marble"
+    },
+    {
+      "object": "building_NW",
+      "group": "facade",
+      "mesh": "scenes/crossroad_v3/meshes/building_NW.ply",
+      "itu_material": "marble"
+    },
+    {
+      "object": "building_SE",
+      "group": "facade",
+      "mesh": "scenes/crossroad_v3/meshes/building_SE.ply",
+      "itu_material": "marble"
+    },
+    {
+      "object": "building_SW",
+      "group": "facade",
+      "mesh": "scenes/crossroad_v3/meshes/building_SW.ply",
+      "itu_material": "marble"
+    },
+    {
+      "object": "street_W_00",
+      "group": "road",
+      "mesh": "scenes/crossroad_v3/meshes/street_W_00.ply",
+      "itu_material": "concrete"
+    },
+    {
+      "object": "street_W_01",
+      "group": "road",
+      "mesh": "scenes/crossroad_v3/meshes/street_W_01.ply",
+      "itu_material": "concrete"
+    },
+    {
+      "object": "street_W_02",
+      "group": "road",
+      "mesh": "scenes/crossroad_v3/meshes/street_W_02.ply",
+      "itu_material": "concrete"
+    },
+    {
+      "object": "street_E_03",
+      "group": "road",
+      "mesh": "scenes/crossroad_v3/meshes/street_E_03.ply",
+      "itu_material": "concrete"
+    },
+    {
+      "object": "street_E_04",
+      "group": "road",
+      "mesh": "scenes/crossroad_v3/meshes/street_E_04.ply",
+      "itu_material": "concrete"
+    },
+    {
+      "object": "street_E_05",
+      "group": "road",
+      "mesh": "scenes/crossroad_v3/meshes/street_E_05.ply",
+      "itu_material": "concrete"
+    },
+    {
+      "object": "street_Se_06",
+      "group": "road",
+      "mesh": "scenes/crossroad_v3/meshes/street_Se_06.ply",
+      "itu_material": "concrete"
+    },
+    {
+      "object": "street_Ne_07",
+      "group": "road",
+      "mesh": "scenes/crossroad_v3/meshes/street_Ne_07.ply",
+      "itu_material": "concrete"
+    },
+    {
+      "object": "footway_NS_WS",
+      "group": "footway",
+      "mesh": "scenes/crossroad_v3/meshes/footway_NS_WS.ply",
+      "itu_material": "concrete"
+    },
+    {
+      "object": "footway_NS_WN",
+      "group": "footway",
+      "mesh": "scenes/crossroad_v3/meshes/footway_NS_WN.ply",
+      "itu_material": "concrete"
+    },
+    {
+      "object": "footway_NS_ES",
+      "group": "footway",
+      "mesh": "scenes/crossroad_v3/meshes/footway_NS_ES.ply",
+      "itu_material": "concrete"
+    },
+    {
+      "object": "footway_NS_EN",
+      "group": "footway",
+      "mesh": "scenes/crossroad_v3/meshes/footway_NS_EN.ply",
+      "itu_material": "concrete"
+    },
+    {
+      "object": "footway_EW_SW",
+      "group": "footway",
+      "mesh": "scenes/crossroad_v3/meshes/footway_EW_SW.ply",
+      "itu_material": "concrete"
+    },
+    {
+      "object": "footway_EW_SE",
+      "group": "footway",
+      "mesh": "scenes/crossroad_v3/meshes/footway_EW_SE.ply",
+      "itu_material": "concrete"
+    },
+    {
+      "object": "footway_EW_NW",
+      "group": "footway",
+      "mesh": "scenes/crossroad_v3/meshes/footway_EW_NW.ply",
+      "itu_material": "concrete"
+    },
+    {
+      "object": "footway_EW_NE",
+      "group": "footway",
+      "mesh": "scenes/crossroad_v3/meshes/footway_EW_NE.ply",
+      "itu_material": "concrete"
+    }
+  ],
+  "scattering_ranges": {
+    "vehicle_metal": [
+      0.1,
+      0.3
+    ],
+    "vehicle_glass": [
+      0.0,
+      0.1
+    ],
+    "vehicle_tyres": [
+      0.1,
+      0.3
+    ],
+    "ground": [
+      0.02,
+      0.1
+    ],
+    "road": [
+      0.02,
+      0.1
+    ],
+    "footway": [
+      0.05,
+      0.2
+    ],
+    "facade": [
+      0.1,
+      0.3
+    ]
+  },
+  "raytracing": {
+    "frequency_hz": 28000000000.0,
+    "samples_per_src": 2000000,
+    "max_depth": 3,
+    "rt_seed": 32,
+    "specular_reflection": true,
+    "diffuse_reflection": true,
+    "refraction": false,
+    "los": false,
+    "synthetic_array": true
+  }
+}

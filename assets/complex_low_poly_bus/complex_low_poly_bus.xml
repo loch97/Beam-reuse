@@ -1,0 +1,9 @@
+<scene version="3.0.0">
+  <integrator type="path" />
+  <bsdf type="itu-radio-material" id="mat-vehicle-metal"><string name="type" value="metal" /></bsdf>
+  <bsdf type="itu-radio-material" id="mat-vehicle-glass"><string name="type" value="glass" /></bsdf>
+  <bsdf type="itu-radio-material" id="mat-tyre-proxy"><string name="type" value="very_dry_ground" /></bsdf>
+  <shape type="ply" id="vehicle-body-metal"><string name="filename" value="meshes/body_metal.ply" /><boolean name="face_normals" value="true" /><transform name="to_world"><scale x="1.000000" y="1.000000" z="1.000000" /></transform><ref id="mat-vehicle-metal" name="bsdf" /></shape>
+  <shape type="ply" id="vehicle-glazing"><string name="filename" value="meshes/glazing.ply" /><boolean name="face_normals" value="true" /><transform name="to_world"><scale x="1.000000" y="1.000000" z="1.000000" /></transform><ref id="mat-vehicle-glass" name="bsdf" /></shape>
+  <shape type="ply" id="vehicle-tyres"><string name="filename" value="meshes/tyres.ply" /><boolean name="face_normals" value="true" /><transform name="to_world"><scale x="1.000000" y="1.000000" z="1.000000" /></transform><ref id="mat-tyre-proxy" name="bsdf" /></shape>
+</scene>
