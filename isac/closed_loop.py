@@ -24,7 +24,8 @@ from .detection import delay_amplitude
 from .frontend import BeamFrontEnd
 from .interfaces import GrantReport, SensingReport
 from .target import box_scatterers, array_gain, FP
-from .tracker import CVTracker, RcsEstimator, crb_polar, glint_polar
+from .rcs import RcsPopulation, RcsEstimator
+from .tracker import CVTracker, crb_polar, glint_polar
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "outputs/closed_loop"
@@ -101,17 +102,16 @@ class SensingBackend:
             leak = cp * V.rx_rel(u - cu) * np.clip(delay_amplitude(r - cr, d.bandwidth) ** 2, 0, 1)
         noise = np.sqrt((1 + leak) / 2) * (self.rng.normal(size=len(u)) + 1j * self.rng.normal(size=len(u)))
         stat = np.abs(coup @ amp + noise) ** 2 / (1 + leak)
-        hit = stat > -math.log(V.P["pfa"])
+        eta = -math.log(V.P["pfa"])
+        hit = stat > eta
         if not hit.any():
             return SensingReport(d.t, False)
         c = int(np.argmax(np.where(hit, stat, -np.inf)))
         snr_db = 10 * math.log10(max(stat[c] - 1, 1e-3))
         R = crb_polar(snr_db, d.bandwidth) + glint_polar(xy[c], self.rsu, self.bore)
         z = np.array([u[c], r[c]]) + np.linalg.cholesky(R) @ self.rng.normal(size=2)
-        dh = V.P["rsu_h"] - V.P["rc_h"]
-        z_th = 90 + math.degrees(math.atan2(dh, math.sqrt(max(z[1] ** 2 - dh**2, 0.0))))
-        unit = V.rc_snr_db(array_gain(W, [z[0]])[0, 0], z[0], z[1], 0.0, z_th, d.n_re)
-        return SensingReport(d.t, True, z, R, snr_db, float(unit))
+        return SensingReport(d.t, True, z, R, snr_db, float(stat[c]), eta,
+                             float(10 * math.log10(1 + leak[c])))
 
 
 def truth_trajectory(n, T, rng, start=(5.25, -95.0), speed=8.0, sigma_a=0.5):
@@ -124,23 +124,38 @@ def truth_trajectory(n, T, rng, start=(5.25, -95.0), speed=8.0, sigma_a=0.5):
     return out
 
 
+def truth_rcs_series(times, base, sd, rho_frame, frame_dt, rng):
+    """Dominant RCS along the run: base plus an AR(1) aspect deviation (stationary sd ``sd``)."""
+    out, x, t_prev = [], sd * rng.normal(), None
+    for t in times:
+        if t_prev is not None:
+            phi = rho_frame ** ((t - t_prev) / frame_dt)
+            x = phi * x + sd * math.sqrt(max(1 - phi * phi, 0.0)) * rng.normal()
+        out.append(base + x)
+        t_prev = t
+    return out
+
+
 def run(epochs=80, period=4, seed=1, target_model="extended", cls="car", n_grants=5,
-        max_mcs_drop=3, srs_std=None, verbose=True):
+        max_mcs_drop=3, srs_std=None, verbose=True, rcs_mode=None, rcs_likelihood=None,
+        truth_offset_db=0.0, truth_aspect_sd=None, class_known=True):
     configure()
     rng = np.random.default_rng(seed)
     meta, rsu, bore = LS.geometry()
     recs = json.loads((ROOT / "data/reference/main_calibration.json").read_text())["records"]
-    prior = float(np.percentile([x["sigma"] for x in recs if x["site"] != V.EVAL_SITE],
-                                FP["rcs_prior_quantile"]))
-    truth_rcs = float(np.median([x["sigma"] for x in recs if x["site"] == V.EVAL_SITE and x["cls"] == cls]))
+    pop = RcsPopulation.fit(recs)
+    base = float(np.median([x["sigma"] for x in recs if x["site"] == V.EVAL_SITE and x["cls"] == cls]))
+    base += truth_offset_db
     ue_rcs = V.rcs_class_median(recs, "car")
     T = V.P["T_epoch"]
     traj = truth_trajectory(epochs, T, rng)
+    asd = pop.omega if truth_aspect_sd is None else truth_aspect_sd
+    truth_rcs = truth_rcs_series([tr["t"] for tr in traj], base, asd, pop.rho_frame, pop.frame_dt, rng)
     t0 = traj[0]
     trk = CVTracker(0, 0.0, t0["xy"] + rng.normal(size=2), t0["v"] + rng.normal(size=2), rsu, bore,
                     EXTENT[cls], cls)
-    rcs_est = RcsEstimator(prior)
-    fe = BeamFrontEnd(rsu, bore, target_model, ue_vehicle_rcs_dbsm=ue_rcs)
+    rcs_est = RcsEstimator(pop, cls if class_known else None, 0.0, rcs_likelihood)
+    fe = BeamFrontEnd(rsu, bore, target_model, ue_vehicle_rcs_dbsm=ue_rcs, rcs_mode=rcs_mode)
     sched = Scheduler(rsu, bore, rng, n_grants, max_mcs_drop, srs_std)
     back = SensingBackend(rsu, bore, rng, ue_rcs)
     log = []
@@ -148,28 +163,39 @@ def run(epochs=80, period=4, seed=1, target_model="extended", cls="car", n_grant
         tr = traj[k]
         if tr["xy"][1] > rsu[1] - 7.0:
             break
-        truth = dict(xy=tr["xy"], heading=tr["heading"], extent=EXTENT[cls], rcs=truth_rcs)
+        truth = dict(xy=tr["xy"], heading=tr["heading"], extent=EXTENT[cls], rcs=truth_rcs[k])
         grants = sched.grants(tr["t"])
-        rcs = rcs_est.report()
+        rcs = rcs_est.report(tr["t"])
         d = fe.plan(trk.report(), grants, rcs, t=tr["t"])
         g = grants[d.grant] if d.mode == "reuse" else None
         rep = back.execute(d, truth, sched, g)
         trk.update(rep)
-        rcs_est.update(rep)
+        rcs_est.update(fe.rcs_look(d, rep, trk.report()))
         err = float(np.hypot(*(trk.x[:2] - tr["xy"])))
         row = dict(t=tr["t"], mode=d.mode, tag=d.tag, pd_pred=d.pd_pred, detected=rep.detected,
                    sigma_u=d.sigma_u, s_r=d.s_r, cost_bits=d.cost_bits, dse=d.dse,
-                   ue_loss_db=d.ue_loss_db, rcs_design=rcs.design_dbsm, rcs_source=rcs.source,
-                   snr_db=rep.snr_db, pos_err_m=err, n_candidates=d.n_candidates)
+                   ue_loss_db=d.ue_loss_db, rcs_design=rcs.design_dbsm, rcs_mean=rcs.mean_dbsm,
+                   rcs_sd=rcs.sd_dbsm, rcs_source=rcs.source, rcs_truth=truth_rcs[k],
+                   snr_db=rep.snr_db, pos_err_m=err, n_candidates=d.n_candidates,
+                   n_evaluated=d.info.get("n_evaluated"))
         log.append(row)
         if verbose:
             print(f"t={tr['t']:5.1f}s {d.mode:9s} tag={d.tag:4d} pd={d.pd_pred:.3f} "
-                  f"det={int(rep.detected)} s_u={d.sigma_u:.4f} rcs={rcs.design_dbsm:6.2f}({rcs.source}) "
+                  f"det={int(rep.detected)} s_u={d.sigma_u:.4f} "
+                  f"rcs={rcs.mean_dbsm:6.2f}+-{rcs.sd_dbsm:4.2f} (truth {truth_rcs[k]:6.2f}) "
                   f"err={err:5.2f}m", flush=True)
     summary = summarize(log)
+    final = rcs_est.report()
+    summary.update(final_rcs_mean_dbsm=final.mean_dbsm, final_rcs_sd_dbsm=final.sd_dbsm,
+                   final_rcs_truth_dbsm=log[-1]["rcs_truth"] if log else None)
     return dict(config=dict(epochs=epochs, period=period, seed=seed, target_model=target_model,
                             cls=cls, n_grants=n_grants, max_mcs_drop=max_mcs_drop,
-                            srs_std=srs_std, prior_dbsm=prior, truth_rcs_dbsm=truth_rcs),
+                            srs_std=srs_std, rcs_mode=fe.rcs_mode,
+                            rcs_likelihood=rcs_est.likelihood, truth_base_dbsm=base,
+                            truth_aspect_sd_db=asd, class_known=class_known,
+                            population=dict(mu=pop.mu, prior_sd=pop.prior_sd, tau=pop.tau,
+                                            omega=pop.omega, rho_frame=pop.rho_frame,
+                                            frame_dt=pop.frame_dt)),
                 summary=summary, log=log)
 
 
@@ -186,6 +212,7 @@ def summarize(log):
         mean_predicted_pd=float(pd.mean()),
         reuse_detection_rate=float(det[reuse].mean()) if reuse.any() else None,
         reuse_mean_predicted_pd=float(pd[reuse].mean()) if reuse.any() else None,
+        brier=float(np.mean((pd - det) ** 2)),
         mean_cost_bits=float(np.mean([r["cost_bits"] for r in log])),
         rms_pos_err_m=float(np.sqrt(np.mean([r["pos_err_m"] ** 2 for r in log]))),
         final_rcs_source=log[-1]["rcs_source"],
@@ -203,8 +230,19 @@ def main():
     p.add_argument("--max-mcs-drop", type=int, default=3)
     p.add_argument("--srs-std", type=float, default=None,
                    help="UE direction std from SRS (u units); default: grid-cell knowledge (U1)")
+    p.add_argument("--rcs-mode", choices=["predictive", "design"], default=None)
+    p.add_argument("--rcs-likelihood", choices=["event+truncated", "truncated"], default=None)
+    p.add_argument("--truth-offset-db", type=float, default=0.0,
+                   help="shift of the true RCS from the evaluation-site class median")
+    p.add_argument("--truth-aspect-sd", type=float, default=None,
+                   help="sd of the true AR(1) aspect deviation (dB); default: fitted omega")
+    p.add_argument("--class-unknown", action="store_true",
+                   help="RCS prior is the class mixture instead of the tracked class")
     a = p.parse_args()
-    res = run(a.epochs, a.period, a.seed, a.target_model, a.cls, a.grants, a.max_mcs_drop, a.srs_std)
+    res = run(a.epochs, a.period, a.seed, a.target_model, a.cls, a.grants, a.max_mcs_drop,
+              a.srs_std, rcs_mode=a.rcs_mode, rcs_likelihood=a.rcs_likelihood,
+              truth_offset_db=a.truth_offset_db, truth_aspect_sd=a.truth_aspect_sd,
+              class_known=not a.class_unknown)
     OUT.mkdir(parents=True, exist_ok=True)
     dest = OUT / f"{a.target_model}_{a.cls}_seed{a.seed}.json"
     dest.write_text(json.dumps(res, indent=2, default=float) + "\n")

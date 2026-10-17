@@ -38,17 +38,21 @@ class TrackReport:
 
 @dataclass
 class RcsReport:
-    """Tracker-side RCS knowledge for the dominant scatterer, in dBsm.
+    """Tracker-side knowledge of the dominant-scatterer RCS at the planning time, in dBsm.
 
-    ``design_dbsm`` is the value the front end plans with (a conservative lower confidence bound
-    once enough looks exist, otherwise the calibration prior). ``looks`` is the effective number of
-    detections behind the estimate.
+    ``nodes_dbsm``/``weights`` are exact-mass nodes of the predictive RCS distribution; the front
+    end averages P_D over them (``rcs_mode="predictive"``). ``design_dbsm`` is its lower
+    ``rcs_confidence`` quantile, used alone by ``rcs_mode="design"`` and when no nodes are given.
+    ``looks`` counts the looks that entered the posterior.
     """
 
     design_dbsm: float
     mean_dbsm: Optional[float] = None
     looks: float = 0.0
     source: str = "calibration"
+    nodes_dbsm: Optional[np.ndarray] = None
+    weights: Optional[np.ndarray] = None
+    sd_dbsm: Optional[float] = None
 
 
 @dataclass
@@ -87,6 +91,8 @@ class BeamDecision:
     weights: Optional[np.ndarray] = None
     tag: Optional[int] = None
     pd_pred: float = float("nan")
+    pd_curve_sigma: Optional[np.ndarray] = None
+    pd_curve: Optional[np.ndarray] = None
     ue_loss_db: float = 0.0
     mcs: Optional[int] = None
     dse: float = 0.0
@@ -98,6 +104,7 @@ class BeamDecision:
     sigma_u: float = float("nan")
     s_r: float = float("nan")
     rcs_design_dbsm: float = float("nan")
+    rcs_mean_dbsm: float = float("nan")
     n_candidates: int = 0
     info: dict = field(default_factory=dict)
 
@@ -107,9 +114,9 @@ class SensingReport:
     """Sensing back-end result for an executed decision.
 
     ``z`` = (u, r) of the strongest detected cell, ``R`` its measurement covariance (CRB at the
-    measured SNR and the grant bandwidth, plus extent glint). ``snr_db`` is the per-cell SNR estimate
-    after integration and ``unit_snr_db`` the SNR the same beam would give for a 0 dBsm dominant
-    scatterer at the reported cell, so that ``snr_db - unit_snr_db`` estimates the dominant RCS.
+    measured SNR and the grant bandwidth, plus extent glint). ``stat`` is that cell's power over
+    the CFAR disturbance floor, ``eta`` the threshold on the same scale and ``floor_db`` the floor
+    over thermal noise (10 log10(1 + UE leakage)). ``snr_db`` = 10 log10(stat - 1).
     """
 
     t: float
@@ -117,4 +124,6 @@ class SensingReport:
     z: Optional[np.ndarray] = None
     R: Optional[np.ndarray] = None
     snr_db: Optional[float] = None
-    unit_snr_db: Optional[float] = None
+    stat: Optional[float] = None
+    eta: Optional[float] = None
+    floor_db: Optional[float] = None

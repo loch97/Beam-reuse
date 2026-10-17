@@ -9,6 +9,7 @@ from isac import target as TG, tracker as TR
 from isac.detection import predictive_pd
 from isac.frontend import BeamFrontEnd
 from isac.interfaces import GrantReport, SensingReport, RcsReport
+from isac.rcs import RcsPopulation, RcsEstimator, RcsLook
 
 ROOT = TG.ROOT
 
@@ -104,21 +105,10 @@ class FrontEndTests(unittest.TestCase):
         offs, dom = trk.scatterer_offsets()
         z = TR.polar(x_pred[:2] + offs[dom], self.rsu, self.bore)
         R = TR.crb_polar(20.0, 32 * 12 * V.P["df"])
-        self.assertTrue(trk.update(SensingReport(0.5, True, z, R, 20.0, 0.0)))
+        self.assertTrue(trk.update(SensingReport(0.5, True, z, R, snr_db=20.0)))
         self.assertLess(np.trace(trk.P[:2, :2]), np.trace(P_pred[:2, :2]))
         self.assertFalse(trk.update(SensingReport(0.9, False)))
         self.assertEqual(trk.misses, 1)
-
-    def test_rcs_estimator_lower_bound(self):
-        rng = np.random.default_rng(3)
-        est = TR.RcsEstimator(-1.0)
-        self.assertEqual(est.report().source, "calibration")
-        for p in rng.exponential(10 ** 0.4, 400):
-            est.update(SensingReport(0.0, True, snr_db=10 * math.log10(p) + 20, unit_snr_db=20.0))
-        rep = est.report()
-        self.assertEqual(rep.source, "tracker")
-        self.assertLess(rep.design_dbsm, rep.mean_dbsm)
-        self.assertLess(abs(rep.mean_dbsm - 4.0), 2.5)
 
     def test_plan_respects_link_and_detection_constraints(self):
         rng = np.random.default_rng(5)
@@ -145,6 +135,150 @@ class FrontEndTests(unittest.TestCase):
         x = np.array([*self.row["target_xy_m"], 0.0, 8.0])
         P = np.diag([0.3 * pos_std, pos_std]) ** 2
         return x, P
+
+
+
+ETA = -math.log(1e-3)
+
+
+def static_population(mu=0.0, sd=3.0):
+    return RcsPopulation({"car": mu}, {"car": sd}, {"car": 1.0}, sd, 0.0, 0.0, 1.2)
+
+
+def single_cell_look(rng, t, sigma_true, unit_db, grid):
+    """Exact single-cell Swerling-1 look: P_D curve and truncated statistic."""
+    m_true = 1 + 10 ** ((sigma_true + unit_db) / 10)
+    stat = rng.exponential(m_true)
+    curve = np.exp(-ETA / (1 + 10 ** ((grid + unit_db) / 10)))
+    if stat > ETA:
+        return RcsLook(t, True, grid, curve, stat, ETA, unit_db), stat
+    return RcsLook(t, False, grid, curve), None
+
+
+def posterior_quantiles(est, qs):
+    s, p = est.predictive(est.t)
+    o = np.argsort(s)
+    cdf = np.cumsum(p[o])
+    return [s[o][min(np.searchsorted(cdf, q), len(s) - 1)] for q in qs]
+
+
+class RcsEstimatorTests(unittest.TestCase):
+    grid = np.arange(-40.0, 50.01, 1.5)
+
+    def test_population_fit(self):
+        recs = json.loads((ROOT / "data/reference/main_calibration.json").read_text())["records"]
+        pop = RcsPopulation.fit(recs)
+        train = [r for r in recs if r["site"] != V.EVAL_SITE]
+        for c in ("car", "bus"):
+            self.assertAlmostEqual(pop.mu[c], np.mean([r["sigma"] for r in train if r["cls"] == c]))
+            self.assertGreater(pop.prior_sd[c], pop.tau)
+        self.assertGreater(pop.omega, 0.5)
+        self.assertTrue(0 <= pop.rho_frame < 1)
+        self.assertAlmostEqual(pop.frame_dt, 1.2)
+        self.assertLess(pop.tau, TG.FP["rcs_tau0_db"])  # little between-target spread: shrunk
+        self.assertEqual(RcsEstimator(pop, "truck").cls, None)  # unknown class -> mixture
+
+    def test_truncated_likelihood_removes_detection_bias(self):
+        sigma_true, unit_db = 2.0, 4.0  # mean SNR 6 dB: P_D ~ 0.25
+        for mode in ("event+truncated", "truncated"):
+            rng = np.random.default_rng(11)
+            est = RcsEstimator(static_population(0.0, 5.0), "car", likelihood=mode)
+            naive = []
+            for i in range(400):
+                look, stat = single_cell_look(rng, 0.1 * i, sigma_true, unit_db, self.grid)
+                est.update(look)
+                if stat is not None:
+                    naive.append(stat - 1)
+            rep = est.report()
+            self.assertLess(abs(rep.mean_dbsm - sigma_true), 0.6, mode)
+        naive_db = 10 * math.log10(np.mean(naive)) - unit_db
+        self.assertGreater(naive_db - sigma_true, 3.0)
+
+    def test_credible_interval_coverage(self):
+        rng = np.random.default_rng(7)
+        hits, n = 0, 120
+        for _ in range(n):
+            sigma_true = 3.0 * rng.normal()
+            est = RcsEstimator(static_population(0.0, 3.0), "car")
+            for i in range(25):
+                est.update(single_cell_look(rng, 0.1 * i, sigma_true, 6.0, self.grid)[0])
+            lo, hi = posterior_quantiles(est, (0.1, 0.9))
+            hits += lo <= sigma_true <= hi
+        self.assertTrue(0.7 <= hits / n <= 0.92, hits / n)
+
+    def test_ar_transition_and_report_nodes(self):
+        pop = RcsPopulation({"car": 0.0}, {"car": 3.0}, {"car": 1.0}, 3.0, 2.0, 0.5, 1.2)
+        est = RcsEstimator(pop, "car")
+        T = est._transition(0.4)
+        np.testing.assert_allclose(T.sum(axis=1), 1.0, atol=1e-12)
+        marg0 = est.p.sum(axis=0)
+        np.testing.assert_allclose(marg0 @ T, marg0, atol=2e-3)
+        rep = est.report(0.4)
+        self.assertEqual(len(rep.nodes_dbsm), TG.FP["rcs_nodes"])
+        self.assertAlmostEqual(rep.weights.sum(), 1.0)
+        self.assertTrue(np.all(np.diff(rep.nodes_dbsm) > 0))
+        self.assertAlmostEqual(rep.weights @ rep.nodes_dbsm, rep.mean_dbsm, places=9)
+        self.assertAlmostEqual(rep.sd_dbsm, math.sqrt(9 + 4), delta=0.05)
+        self.assertLess(rep.design_dbsm, rep.mean_dbsm)
+
+
+class PredictiveFrontEndTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        CL.configure()
+        cls.meta, cls.rsu, cls.bore = LS.geometry()
+        rng = np.random.default_rng(5)
+        cls.grants = CL.Scheduler(cls.rsu, cls.bore, rng, n_grants=4).grants(0.4)
+        cls.trk = TR.CVTracker(0, 0.0, (5.25, -62.0), (0.0, 8.0), cls.rsu, cls.bore,
+                               (4.73, 1.88), P0=np.diag([0.3, 0.3, 0.2, 0.2]))
+
+    def test_predictive_pd_is_rcs_average(self):
+        fe = BeamFrontEnd(self.rsu, self.bore, "extended")
+        g = self.grants[0]
+        pred = fe.prediction(self.trk.report(), g.t)
+        W = np.array([V.beam(pred["u_hat"]), V.beam(V.GRID[g.k0])])
+        n_re, bw, clut = g.n_prb * 12 * g.n_sym, g.n_prb * 12 * V.P["df"], fe.clutter(g)
+        sig, w = np.array([-4.0, 0.0, 5.0]), np.array([0.2, 0.5, 0.3])
+        single = np.stack([fe.detect(W, pred, n_re, bw, clut, np.array([s]), np.ones(1))
+                           for s in sig])
+        np.testing.assert_allclose(fe.detect(W, pred, n_re, bw, clut, sig, w), w @ single,
+                                   atol=1e-12)
+        self.assertTrue(np.all(np.diff(single, axis=0) >= -1e-12))  # P_D rises with RCS
+        rep = RcsReport(-2.0, 1.0, 3, "x", sig, w)
+        self.assertEqual(fe.rcs_nodes(rep)[0].tolist(), sig.tolist())
+        fd = BeamFrontEnd(self.rsu, self.bore, "extended", rcs_mode="design")
+        self.assertEqual(fd.rcs_nodes(rep)[0].tolist(), [-2.0])
+
+    def test_lazy_plan_matches_exhaustive(self):
+        rcs = RcsReport(-1.0, 0.5, 0, "x", np.array([-3.0, 0.0, 3.0]), np.ones(3) / 3)
+        for model in ("extended", "point"):
+            lazy = BeamFrontEnd(self.rsu, self.bore, model).plan(self.trk.report(), self.grants, rcs)
+            full = BeamFrontEnd(self.rsu, self.bore, model, lazy=False).plan(
+                self.trk.report(), self.grants, rcs)
+            self.assertEqual((lazy.mode, lazy.grant, lazy.tag), (full.mode, full.grant, full.tag))
+            self.assertEqual(lazy.pd_pred, full.pd_pred)
+            np.testing.assert_array_equal(lazy.weights, full.weights)
+            self.assertLessEqual(lazy.info["n_evaluated"], full.info["n_evaluated"])
+            curve = np.interp(rcs.nodes_dbsm, lazy.pd_curve_sigma, lazy.pd_curve)
+            self.assertAlmostEqual(float(rcs.weights @ curve), lazy.pd_pred, delta=0.02)
+
+    def test_rcs_look_uses_posterior_cell_and_floor(self):
+        fe = BeamFrontEnd(self.rsu, self.bore, "extended")
+        tr = self.trk.report()
+        d = fe.dedicated(tr, [], RcsReport(0.0), t=0.0)
+        h = TR.heading_of(tr.x, tr.P)[0]
+        nodes = TG.pose_nodes(tr.x[:2], np.zeros((2, 2)), h, 0.0, tr.extent, self.rsu, self.bore, 0.0)
+        snr = TG.cell_snr(d.weights[None], nodes, d.n_re, d.bandwidth)[0, 0]
+        c = nodes.dom
+        z = np.array([nodes.u[0, c], nodes.r[0, c]])
+        R = TR.crb_polar(15.0, d.bandwidth)
+        rep = SensingReport(0.0, True, z, R, 15.0, stat=20.0, eta=ETA, floor_db=3.0)
+        look = fe.rcs_look(d, rep, tr)
+        self.assertAlmostEqual(look.unit_db, 10 * math.log10(snr[c]) - 3.0, places=9)
+        self.assertEqual((look.stat, look.eta, look.detected), (20.0, ETA, True))
+        miss = fe.rcs_look(d, SensingReport(0.0, False), tr)
+        self.assertIsNone(miss.stat)
+        self.assertEqual(len(miss.pd), len(miss.pd_sigma))
 
 
 if __name__ == "__main__":

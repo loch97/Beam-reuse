@@ -167,16 +167,20 @@ def cell_snr(W, nodes, n_re, bandwidth):
     return np.einsum("bnk,nck->bnc", rho, coupling, optimize=True)
 
 
-def extended_pd(W, nodes, n_re, bandwidth, clutter=None, focus=None, threshold=None):
-    """Uncertainty-averaged P_D of the extended target for each beam in ``W``.
+def extended_pd_shifts(W, nodes, n_re, bandwidth, clutter=None, focus=None, shifts_db=(0.0,),
+                       screen=None):
+    """P_D of the extended target for each RCS shift and beam: arrays (shifts, beams).
 
-    ``clutter`` = (cu, cr, cs, ct[, cw]) as in ``detection.predictive_pd``: UE-reflector directions
-    ``cu`` with quadrature weights ``cw``, range ``cr``, RCS ``cs`` and elevation ``ct``. With a
-    ``threshold`` the clutter-free value (an upper bound) screens beams first; screened-out beams
+    Every scatterer RCS in ``nodes`` moves by the same shift (dB), so a shift evaluates the target
+    at another dominant RCS. ``clutter`` = (cu, cr, cs, ct[, cw]) as in ``detection.predictive_pd``:
+    UE-reflector directions ``cu`` with quadrature weights ``cw``, range ``cr``, RCS ``cs`` and
+    elevation ``ct``. ``screen`` = (threshold, shift weights): beams whose shift-averaged
+    clutter-free value (an upper bound) is below the threshold skip the clutter evaluation and
     return -1. Returns (pd, clutter-free pd).
     """
     focus = FP["ext_focus"] if focus is None else focus
     W = np.atleast_2d(W)
+    scale = 10 ** (np.atleast_1d(np.asarray(shifts_db, float)) / 10)
     lp = math.log(V.P["pfa"])
     rho = cell_snr(W, nodes, n_re, bandwidth)
     if focus == "dominant":
@@ -186,13 +190,15 @@ def extended_pd(W, nodes, n_re, bandwidth, clutter=None, focus=None, threshold=N
         cu_nodes, cr_nodes = nodes.u, nodes.r
     else:
         raise ValueError(focus)
-    upper = np.exp(lp / (1 + rho)).max(axis=2) @ nodes.w
+    best = rho.max(axis=2)
+    upper = np.stack([np.exp(lp / (1 + x * best)) @ nodes.w for x in scale])
     if clutter is None:
         return upper, upper
     active = np.arange(len(W))
-    if threshold is not None:
-        active = np.flatnonzero(upper >= threshold - 1e-13)
-    out = np.full(len(W), -1.0)
+    if screen is not None:
+        threshold, weights = screen
+        active = np.flatnonzero(np.asarray(weights) @ upper >= threshold - 1e-13)
+    out = np.full(upper.shape, -1.0)
     if not len(active):
         return out, upper
     rho = rho[active]
@@ -200,10 +206,22 @@ def extended_pd(W, nodes, n_re, bandwidth, clutter=None, focus=None, threshold=N
     cu = np.atleast_1d(cu)
     cw = np.asarray(clutter[4]) if len(clutter) > 4 else np.ones(len(cu)) / len(cu)
     cp = 10 ** (V.rc_snr_db(array_gain(W[active], cu), cu, cr, cs, ct, n_re) / 10)
-    delay = delay_power(cr_nodes - cr, bandwidth)
-    pd = np.zeros(rho.shape)
-    for q in range(len(cu)):
-        leak = cp[:, q, None, None] * (V.rx_rel(cu_nodes - cu[q]) * delay)[None]
-        pd += cw[q] * np.exp(lp * (1 + leak) / (1 + leak + rho))
-    out[active] = pd.max(axis=2) @ nodes.w
+    resp = V.rx_rel(cu_nodes[None] - cu[:, None, None]) * delay_power(cr_nodes - cr, bandwidth)
+    for i, x in enumerate(scale):
+        pd = np.zeros(rho.shape)
+        for q in range(len(cu)):
+            leak = cp[:, q, None, None] * resp[q][None]
+            pd += cw[q] * np.exp(lp * (1 + leak) / (1 + leak + x * rho))
+        out[i, active] = pd.max(axis=2) @ nodes.w
     return out, upper
+
+
+def extended_pd(W, nodes, n_re, bandwidth, clutter=None, focus=None, threshold=None):
+    """Uncertainty-averaged P_D of the extended target at the RCS stored in ``nodes``.
+
+    With a ``threshold`` the clutter-free value (an upper bound) screens beams first; screened-out
+    beams return -1. Returns (pd, clutter-free pd).
+    """
+    screen = None if threshold is None else (threshold, np.ones(1))
+    pd, upper = extended_pd_shifts(W, nodes, n_re, bandwidth, clutter, focus, (0.0,), screen)
+    return pd[0], upper[0]

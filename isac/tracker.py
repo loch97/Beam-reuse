@@ -11,9 +11,8 @@ with a fixed SNR, a fixed bandwidth and a fixed number of missed epochs.
 
 import math
 import numpy as np
-from scipy.stats import chi2
 from . import model as V
-from .interfaces import TrackReport, RcsReport
+from .interfaces import TrackReport
 from .target import FP, box_scatterers
 
 
@@ -171,31 +170,3 @@ def steady_state_polar(xy, rsu, bore, heading, snr_db, n_prb, gap_k):
         Pp = F @ Pp @ F.T + Q
     Sig = J @ Pp[:2, :2] @ J.T
     return math.sqrt(Sig[0, 0]), math.sqrt(Sig[1, 1]), float(Sig[0, 1])
-
-
-class RcsEstimator:
-    """Dominant-scatterer RCS from detection SNRs (Swerling-1, exponentially forgetting).
-
-    Each detection gives an exponential power sample p_i with mean p (linear RCS), so
-    2 N p_hat / p ~ chi2(2N). The design value is the one-sided lower ``rcs_confidence`` bound.
-    Before ``rcs_min_looks`` effective looks the calibration prior is used. Detection-conditioned
-    samples are biased high; the lower bound and the forgetting keep the design value conservative.
-    """
-
-    def __init__(self, prior_dbsm):
-        self.prior = float(prior_dbsm)
-        self.sum, self.n = 0.0, 0.0
-
-    def update(self, report):
-        if not report.detected or report.snr_db is None:
-            return
-        f = FP["rcs_forget"]
-        self.sum = f * self.sum + 10 ** ((report.snr_db - report.unit_snr_db) / 10)
-        self.n = f * self.n + 1.0
-
-    def report(self):
-        if self.n < FP["rcs_min_looks"]:
-            return RcsReport(self.prior, None, self.n, "calibration")
-        mean = self.sum / self.n
-        lower = 2 * self.n * mean / chi2.ppf(FP["rcs_confidence"], 2 * self.n)
-        return RcsReport(10 * math.log10(lower), 10 * math.log10(mean), self.n, "tracker")
