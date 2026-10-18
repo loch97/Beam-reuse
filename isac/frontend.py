@@ -20,6 +20,15 @@ Candidates are evaluated in increasing cost. A cost level is evaluated only when
 level has no feasible beam, which gives the same choice as evaluating all of them. The decision
 carries the executed beam's predicted P_D versus RCS. ``rcs_look`` turns that curve and the sensing
 report into the evidence used by ``rcs.RcsEstimator``.
+
+Two P_D notions are kept apart:
+- The decision value ``pd_pred`` is E_pose[max over scatterer cells]. This is a conservative
+  bound on detecting the target in any cell.
+- The evidence curve ``pd_curve`` is the crossing probability of the designated (dominant
+  scatterer) cell alone. That cell is the event the back end reports for RCS estimation.
+
+P_D values are compared with ``tau`` after rounding to ``PD_DECIMALS``. Batch-dependent last-bit
+noise then cannot change feasibility or tie-breaks between lazy and exhaustive evaluation.
 """
 
 import math
@@ -34,6 +43,7 @@ from .target import FP, box_scatterers, pose_nodes, extended_pd_shifts, cell_snr
 from .tracker import heading_of, predict_state, polar_jacobian
 
 SEQUENTIAL = (11, 13)
+PD_DECIMALS = 12
 
 
 def curve_sigma():
@@ -92,6 +102,7 @@ class BeamFrontEnd:
             s_u=math.sqrt(Sig[0, 0]),
             s_r=math.sqrt(Sig[1, 1]),
             c_ur=float(Sig[0, 1]),
+            extent=extent,
         )
         if self.target_model == "extended" and extent is not None:
             pred["nodes"] = pose_nodes(x[:2], P[:2, :2], h, sh, extent, self.rsu, self.bore, 0.0)
@@ -100,8 +111,11 @@ class BeamFrontEnd:
     def rcs_nodes(self, rcs):
         """RCS values (dBsm) and weights the predicted P_D is averaged over."""
         if self.rcs_mode == "predictive" and rcs.nodes_dbsm is not None and len(rcs.nodes_dbsm):
-            w = np.asarray(rcs.weights, float)
-            return np.asarray(rcs.nodes_dbsm, float), w / w.sum()
+            sig = np.asarray(rcs.nodes_dbsm, float)
+            w = np.ones(len(sig)) if rcs.weights is None else np.asarray(rcs.weights, float)
+            if not (w.shape == sig.shape and np.all(w >= 0) and w.sum() > 0):
+                raise ValueError("RcsReport weights must be non-negative, match nodes and sum > 0")
+            return sig, w / w.sum()
         return np.array([rcs.design_dbsm], float), np.ones(1)
 
     def pd_shifts(self, W, pred, n_re, bandwidth, clutter, sigma, screen=None):
@@ -124,6 +138,23 @@ class BeamFrontEnd:
             else:
                 out.append(predictive_pd(*args, bandwidth, clutter, **kw)[0])
         return np.array(out)
+
+    def evidence_curve(self, W, pred, n_re, bandwidth, clutter):
+        """Designated-cell crossing probability of beam ``W`` on the ``curve_sigma`` grid.
+
+        With an extent, the cell is the dominant scatterer's and the curve uses the box pose
+        nodes, whatever the decision model. Without an extent it is the point detector.
+        """
+        grid = curve_sigma()
+        if pred["extent"] is None:
+            return grid, self.pd_shifts(W, pred, n_re, bandwidth, clutter, grid)[:, 0]
+        nodes = pred.get("nodes")
+        if nodes is None:
+            nodes = pose_nodes(pred["x"][:2], pred["P"][:2, :2], pred["heading"],
+                               pred["heading_std"], pred["extent"], self.rsu, self.bore, 0.0)
+        pd = extended_pd_shifts(np.atleast_2d(W), nodes, n_re, bandwidth, clutter,
+                                focus="dominant", shifts_db=grid)[0]
+        return grid, pd[:, 0]
 
     def detect(self, W, pred, n_re, bandwidth, clutter, sigma, weights, threshold=None):
         """RCS-averaged predicted P_D per beam (-1 for beams screened out by ``threshold``)."""
@@ -212,15 +243,15 @@ class BeamFrontEnd:
             for cost in sorted(pool):
                 group = pool[cost]
                 n_eval += self._fill_pd(rows, group, sigma, weights)
-                feasible = [(i, c) for i, c in group if rows[i][3]["pd"][c] >= self.tau]
+                q = {ic: round(float(rows[ic[0]][3]["pd"][ic[1]]), PD_DECIMALS) for ic in group}
+                feasible = [ic for ic in group if q[ic] >= self.tau]
                 if not feasible:
                     continue
-                i, c = min(feasible, key=lambda ic: (-rows[ic[0]][3]["pd"][ic[1]],
-                                                     rows[ic[0]][3]["loss"][ic[1]], ic[0]))
+                i, c = min(feasible, key=lambda ic: (-q[ic], rows[ic[0]][3]["loss"][ic[1]],
+                                                     ic[0], ic[1]))
                 _, g, pred, e = rows[i]
                 W = e["W"][c]
-                grid = curve_sigma()
-                curve = self.pd_shifts(W, pred, e["n_re"], e["bw"], e["clutter"], grid)[:, 0]
+                grid, curve = self.evidence_curve(W, pred, e["n_re"], e["bw"], e["clutter"])
                 return BeamDecision(
                     "reuse",
                     g.t,
@@ -254,7 +285,7 @@ class BeamFrontEnd:
         n_re, bw = V.P["ded_prb"] * 12 * V.P["ded_sym"], V.P["ded_prb"] * 12 * V.P["df"]
         pd = self.detect(Wd, pred, n_re, bw, None, sigma, weights)
         c = int(np.argmax(pd))
-        grid = curve_sigma()
+        grid, curve = self.evidence_curve(Wd[c], pred, n_re, bw, None)
         se_ref = (np.mean([next(m for m in V.MCS if m[0] == g.mcs)[2] for g in grants])
                   if grants else 0.0)
         return BeamDecision(
@@ -264,7 +295,7 @@ class BeamFrontEnd:
             tag=-1 - c,
             pd_pred=float(pd[c]),
             pd_curve_sigma=grid,
-            pd_curve=self.pd_shifts(Wd[c], pred, n_re, bw, None, grid)[:, 0],
+            pd_curve=curve,
             cost_bits=float(n_re * se_ref),
             n_re=n_re,
             bandwidth=bw,
@@ -280,29 +311,40 @@ class BeamFrontEnd:
     def rcs_look(self, d, rep, track):
         """RcsLook from an executed decision, its SensingReport and the updated TrackReport.
 
-        For a detection the unit-RCS SNR is taken at the posterior pose, in the scatterer cell
-        closest to the reported cell (distance scaled by the measurement standard deviations),
-        over the reported disturbance floor.
+        The evidence is the designated cell's crossing and power (``rep.rcs_*``), on every look.
+        Its unit-RCS SNR over the measured floor is integrated over the posterior pose: cell quadrature of ``track.P`` and heading for a
+        box, Gauss-Hermite in direction for a point target. Returns None when the back end
+        reported no designated-cell evidence.
         """
-        look = RcsLook(d.t, bool(rep.detected), d.pd_curve_sigma, d.pd_curve)
-        if not rep.detected or rep.stat is None:
-            return look
-        z = np.asarray(rep.z, float)
+        if rep.rcs_detected is None:
+            return None
+        look = RcsLook(d.t, bool(rep.rcs_detected), d.pd_curve_sigma, d.pd_curve)
+        floor = float(rep.rcs_floor_db or 0.0)
         if track.extent is not None:
-            h = track.heading if track.heading is not None else heading_of(track.x, track.P)[0]
-            nodes = pose_nodes(track.x[:2], np.zeros((2, 2)), h, 0.0, track.extent, self.rsu,
+            if track.heading is not None:
+                h, sh = track.heading, track.heading_std or 0.0
+            else:
+                h, sh = heading_of(track.x, track.P)
+            nodes = pose_nodes(track.x[:2], track.P[:2, :2], h, sh, track.extent, self.rsu,
                                self.bore, 0.0)
-            snr = cell_snr(d.weights[None], nodes, d.n_re, d.bandwidth)[0, 0]
-            scale = np.sqrt(np.diag(rep.R))
-            dist = ((nodes.u[0] - z[0]) / scale[0]) ** 2 + ((nodes.r[0] - z[1]) / scale[1]) ** 2
-            unit = float(snr[int(np.argmin(dist))])
+            unit = cell_snr(d.weights[None], nodes, d.n_re, d.bandwidth)[0, :, nodes.dom]
+            w = nodes.w
         else:
-            dh = V.P["rsu_h"] - V.P["rc_h"]
-            th = 90 + math.degrees(math.atan2(dh, math.sqrt(max(z[1] ** 2 - dh * dh, 0.0))))
-            g = array_gain(d.weights[None], [z[0]])[0, 0]
-            unit = 10 ** (V.rc_snr_db(g, z[0], z[1], 0.0, th, d.n_re) / 10)
-        look.stat, look.eta = float(rep.stat), float(rep.eta)
-        look.unit_db = 10 * math.log10(max(unit, 1e-300)) - float(rep.floor_db or 0.0)
+            u, r, th, _ = V.to_polar(track.x[None, :2], self.rsu, self.bore, V.P["rsu_h"],
+                                     V.P["rc_h"])
+            s_u = math.sqrt(float(polar_jacobian(track.x[:2], self.rsu, self.bore)[0]
+                                  @ track.P[:2, :2]
+                                  @ polar_jacobian(track.x[:2], self.rsu, self.bore)[0]))
+            x, w = np.polynomial.hermite_e.hermegauss(FP["ext_heading_nodes"] * 3)
+            un = u[0] + s_u * x
+            unit = 10 ** (V.rc_snr_db(array_gain(d.weights[None], un)[0], un, r[0], 0.0, th[0],
+                                      d.n_re) / 10)
+            w = w / w.sum()
+        keep = w > 1e-9 * w.max()
+        look.eta = float(-math.log(V.P["pfa"]))
+        look.stat = float(rep.rcs_stat) if rep.rcs_detected else None
+        look.unit_db = 10 * np.log10(np.maximum(unit[keep], 1e-300)) - floor
+        look.unit_w = w[keep] / w[keep].sum()
         return look
 
     @staticmethod

@@ -93,25 +93,34 @@ class SensingBackend:
         rho = 10 ** (V.rc_snr_db(array_gain(W, u)[0], u, r, sig, th, d.n_re) / 10)
         amp = np.sqrt(rho / 2) * (self.rng.normal(size=len(u)) + 1j * self.rng.normal(size=len(u)))
         coup = rx_amp(u[:, None] - u[None, :]) * delay_amplitude(r[:, None] - r[None, :], d.bandwidth)
-        leak = np.zeros(len(u))
+        k = len(u)
+        # Matched-filter noise is correlated between cells exactly as the signal coupling (unit
+        # diagonal); the UE is one coherent point reflector seen through the same responses.
+        noise = np.linalg.cholesky(coup + 1e-9 * np.eye(k)) @ (
+            math.sqrt(0.5) * (self.rng.normal(size=k) + 1j * self.rng.normal(size=k)))
+        leak = np.zeros(k)
         if grant is not None and V.P["ue_clutter"]:
             j = grant.ue_id
             cs = self.ue_rcs if grant.ue_kind == "vehicle" else V.P["sigma_ped_dbsm"]
             cu, cr, ct = sched.u[j], sched.r_rc[j], sched.th_rc[j]
             cp = 10 ** (V.rc_snr_db(array_gain(W, [cu])[0, 0], cu, cr, cs, ct, d.n_re) / 10)
-            leak = cp * V.rx_rel(u - cu) * np.clip(delay_amplitude(r - cr, d.bandwidth) ** 2, 0, 1)
-        noise = np.sqrt((1 + leak) / 2) * (self.rng.normal(size=len(u)) + 1j * self.rng.normal(size=len(u)))
+            g = rx_amp(u - cu) * delay_amplitude(r - cr, d.bandwidth)
+            noise = noise + math.sqrt(cp / 2) * (self.rng.normal() + 1j * self.rng.normal()) * g
+            leak = cp * g**2
         stat = np.abs(coup @ amp + noise) ** 2 / (1 + leak)
         eta = -math.log(V.P["pfa"])
         hit = stat > eta
+        jd = keys.index(dom)
+        evidence = dict(rcs_detected=bool(stat[jd] > eta), rcs_stat=float(stat[jd]),
+                        rcs_floor_db=float(10 * math.log10(1 + leak[jd])))
         if not hit.any():
-            return SensingReport(d.t, False)
+            return SensingReport(d.t, False, **evidence)
         c = int(np.argmax(np.where(hit, stat, -np.inf)))
         snr_db = 10 * math.log10(max(stat[c] - 1, 1e-3))
         R = crb_polar(snr_db, d.bandwidth) + glint_polar(xy[c], self.rsu, self.bore)
         z = np.array([u[c], r[c]]) + np.linalg.cholesky(R) @ self.rng.normal(size=2)
         return SensingReport(d.t, True, z, R, snr_db, float(stat[c]), eta,
-                             float(10 * math.log10(1 + leak[c])))
+                             float(10 * math.log10(1 + leak[c])), **evidence)
 
 
 def truth_trajectory(n, T, rng, start=(5.25, -95.0), speed=8.0, sigma_a=0.5):

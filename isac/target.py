@@ -197,7 +197,7 @@ def extended_pd_shifts(W, nodes, n_re, bandwidth, clutter=None, focus=None, shif
     active = np.arange(len(W))
     if screen is not None:
         threshold, weights = screen
-        active = np.flatnonzero(np.asarray(weights) @ upper >= threshold - 1e-13)
+        active = np.flatnonzero(np.asarray(weights) @ upper >= threshold - 1e-11)
     out = np.full(upper.shape, -1.0)
     if not len(active):
         return out, upper

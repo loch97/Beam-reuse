@@ -7,8 +7,8 @@ import numpy as np
 from isac import model as V, simulation_engine as LS, closed_loop as CL
 from isac import target as TG, tracker as TR
 from isac.detection import predictive_pd
-from isac.frontend import BeamFrontEnd
-from isac.interfaces import GrantReport, SensingReport, RcsReport
+from isac.frontend import BeamFrontEnd, curve_sigma
+from isac.interfaces import GrantReport, SensingReport, RcsReport, TrackReport
 from isac.rcs import RcsPopulation, RcsEstimator, RcsLook
 
 ROOT = TG.ROOT
@@ -116,20 +116,26 @@ class FrontEndTests(unittest.TestCase):
         grants = sched.grants(0.4)
         trk = TR.CVTracker(0, 0.0, (5.25, -62.0), (0.0, 8.0), self.rsu, self.bore, (4.73, 1.88),
                            P0=np.diag([0.3, 0.3, 0.2, 0.2]))
-        rcs = RcsReport(3.0)
-        for model in ["extended", "point"]:
-            fe = BeamFrontEnd(self.rsu, self.bore, model)
-            d = fe.plan(trk.report(), grants, rcs)
-            if d.mode == "reuse":
+        w = np.array([1.0, 2.0, 1.0])
+        reports = [RcsReport(3.0), RcsReport(-1.0, 0.5, 0, "x", np.array([-3.0, 0.0, 3.0]), w)]
+        for rcs in reports:
+            for model in ["extended", "point"]:
+                fe = BeamFrontEnd(self.rsu, self.bore, model)
+                d = fe.plan(trk.report(), grants, rcs)
+                self.assertEqual(d.mode, "reuse")
                 g = grants[d.grant]
                 self.assertGreaterEqual(d.pd_pred, fe.tau)
                 self.assertGreaterEqual(d.mcs, max(g.mcs - g.max_mcs_drop, V.P["mcs_floor"]))
                 thr = next(m for m in V.MCS if m[0] == d.mcs)[1]
                 self.assertLessEqual(d.ue_loss_db, g.sinr_db - thr + 1e-9)
                 self.assertEqual(d.n_re, g.n_prb * 12 * g.n_sym)
-            else:
-                self.assertEqual(d.mode, "dedicated")
-        self.assertEqual(fe.plan(trk.report(), [], rcs, t=0.4).mode, "dedicated")
+                if rcs.nodes_dbsm is not None:
+                    np.testing.assert_allclose(d.info["rcs_weights"], w / w.sum())
+        self.assertEqual(fe.plan(trk.report(), [], reports[0], t=0.4).mode, "dedicated")
+        unweighted = RcsReport(0.0, nodes_dbsm=np.array([-1.0, 1.0]))
+        np.testing.assert_allclose(fe.rcs_nodes(unweighted)[1], [0.5, 0.5])
+        with self.assertRaises(ValueError):
+            fe.rcs_nodes(RcsReport(0.0, nodes_dbsm=np.array([-1.0, 1.0]), weights=np.zeros(2)))
 
     def _track_state(self, pos_std):
         x = np.array([*self.row["target_xy_m"], 0.0, 8.0])
@@ -250,36 +256,119 @@ class PredictiveFrontEndTests(unittest.TestCase):
         self.assertEqual(fd.rcs_nodes(rep)[0].tolist(), [-2.0])
 
     def test_lazy_plan_matches_exhaustive(self):
-        rcs = RcsReport(-1.0, 0.5, 0, "x", np.array([-3.0, 0.0, 3.0]), np.ones(3) / 3)
+        grid = curve_sigma()
+        nodes = grid[np.searchsorted(grid, [-4.0, -1.0, 2.0])]
+        rcs = RcsReport(-1.0, 0.5, 0, "x", nodes, np.ones(3) / 3)
         for model in ("extended", "point"):
             lazy = BeamFrontEnd(self.rsu, self.bore, model).plan(self.trk.report(), self.grants, rcs)
             full = BeamFrontEnd(self.rsu, self.bore, model, lazy=False).plan(
                 self.trk.report(), self.grants, rcs)
             self.assertEqual((lazy.mode, lazy.grant, lazy.tag), (full.mode, full.grant, full.tag))
-            self.assertEqual(lazy.pd_pred, full.pd_pred)
+            self.assertAlmostEqual(lazy.pd_pred, full.pd_pred, places=12)
             np.testing.assert_array_equal(lazy.weights, full.weights)
             self.assertLessEqual(lazy.info["n_evaluated"], full.info["n_evaluated"])
-            curve = np.interp(rcs.nodes_dbsm, lazy.pd_curve_sigma, lazy.pd_curve)
-            self.assertAlmostEqual(float(rcs.weights @ curve), lazy.pd_pred, delta=0.02)
+            self.assertEqual(len(lazy.pd_curve), len(grid))
+            self.assertTrue(np.all(np.diff(lazy.pd_curve) >= -1e-12))
 
-    def test_rcs_look_uses_posterior_cell_and_floor(self):
+    def test_lazy_plan_matches_exhaustive_deep(self):
+        """Weak target: the search must pass the cheapest level and enter the second stage."""
+        rng = np.random.default_rng(101)
+        grants = CL.Scheduler(self.rsu, self.bore, rng, n_grants=5).grants(0.4)
+        y = -90 + 60 * rng.random()
+        ps = 0.3 + 2 * rng.random()
+        trk = TR.CVTracker(0, 0.0, (5.25, y), (0.0, 8.0), self.rsu, self.bore, (4.73, 1.88),
+                           P0=np.diag([ps, ps, 0.5, 0.5]))
+        mu = -14 + 14 * rng.random()
+        grid = curve_sigma()
+        nodes = grid[np.searchsorted(grid, mu + np.array([-4.0, -1.5, 0.0, 1.5, 4.0]))]
+        rcs = RcsReport(mu - 2, mu, 0, "x", nodes, np.array([0.15, 0.2, 0.3, 0.2, 0.15]))
+        fe = BeamFrontEnd(self.rsu, self.bore, "point")
+        lazy = fe.plan(trk.report(), grants, rcs)
+        full = BeamFrontEnd(self.rsu, self.bore, "point", lazy=False).plan(trk.report(), grants, rcs)
+        self.assertEqual(lazy.mode, "reuse")
+        self.assertGreater(lazy.cost_bits, 0.0)
+        self.assertEqual(lazy.info["stage"], fe.stages[1])
+        self.assertLess(lazy.info["n_evaluated"], full.info["n_evaluated"])
+        self.assertEqual((lazy.mode, lazy.grant, lazy.tag, lazy.cost_bits),
+                         (full.mode, full.grant, full.tag, full.cost_bits))
+        self.assertAlmostEqual(lazy.pd_pred, full.pd_pred, places=12)
+        np.testing.assert_array_equal(lazy.weights, full.weights)
+
+    def test_screen_keeps_every_feasible_beam(self):
+        fe = BeamFrontEnd(self.rsu, self.bore, "extended")
+        g = self.grants[0]
+        pred = fe.prediction(self.trk.report(), g.t)
+        e = fe.evaluate_grant(g, pred)
+        sig, w = np.array([-20.0, 0.0, 5.0]), np.array([0.1, 0.5, 0.4])
+        full = fe.detect(e["W"], pred, e["n_re"], e["bw"], e["clutter"], sig, w)
+        scr = fe.detect(e["W"], pred, e["n_re"], e["bw"], e["clutter"], sig, w, threshold=fe.tau)
+        up = fe.pd_shifts(e["W"], pred, e["n_re"], e["bw"], None, sig)
+        keep = full >= fe.tau
+        self.assertTrue((scr < 0).any())
+        self.assertTrue((keep & (up[0] < fe.tau)).any())  # the RCS spread matters
+        np.testing.assert_allclose(scr[keep], full[keep], atol=1e-12, rtol=0)
+        self.assertTrue(np.all(w @ up[:, scr < 0] < fe.tau))
+
+    def test_rcs_look_designated_cell(self):
         fe = BeamFrontEnd(self.rsu, self.bore, "extended")
         tr = self.trk.report()
         d = fe.dedicated(tr, [], RcsReport(0.0), t=0.0)
+        point = TrackReport(tr.track_id, tr.t, tr.x, np.zeros((4, 4)), tr.extent, tr.cls)
         h = TR.heading_of(tr.x, tr.P)[0]
         nodes = TG.pose_nodes(tr.x[:2], np.zeros((2, 2)), h, 0.0, tr.extent, self.rsu, self.bore, 0.0)
-        snr = TG.cell_snr(d.weights[None], nodes, d.n_re, d.bandwidth)[0, 0]
-        c = nodes.dom
-        z = np.array([nodes.u[0, c], nodes.r[0, c]])
-        R = TR.crb_polar(15.0, d.bandwidth)
-        rep = SensingReport(0.0, True, z, R, 15.0, stat=20.0, eta=ETA, floor_db=3.0)
-        look = fe.rcs_look(d, rep, tr)
-        self.assertAlmostEqual(look.unit_db, 10 * math.log10(snr[c]) - 3.0, places=9)
-        self.assertEqual((look.stat, look.eta, look.detected), (20.0, ETA, True))
-        miss = fe.rcs_look(d, SensingReport(0.0, False), tr)
+        snr = TG.cell_snr(d.weights[None], nodes, d.n_re, d.bandwidth)[0, 0, nodes.dom]
+        rep = SensingReport(0.0, True, rcs_detected=True, rcs_stat=20.0, rcs_floor_db=3.0)
+        look = fe.rcs_look(d, rep, point)
+        np.testing.assert_allclose(look.unit_db, [10 * math.log10(snr) - 3.0], atol=1e-9)
+        self.assertEqual((look.stat, look.detected), (20.0, True))
+        self.assertAlmostEqual(look.eta, ETA)
+        spread = fe.rcs_look(d, rep, tr)  # posterior pose spread -> mixture over pose nodes
+        self.assertGreater(len(spread.unit_db), 1)
+        self.assertAlmostEqual(spread.unit_w.sum(), 1.0)
+        miss = fe.rcs_look(d, SensingReport(0.0, True, rcs_detected=False, rcs_stat=1.0,
+                                            rcs_floor_db=3.0), tr)
+        self.assertFalse(miss.detected)
         self.assertIsNone(miss.stat)
-        self.assertEqual(len(miss.pd), len(miss.pd_sigma))
+        np.testing.assert_allclose(miss.unit_db, spread.unit_db)  # misses carry unit nodes too
+        self.assertIsNone(fe.rcs_look(d, SensingReport(0.0, False), tr))
+        # point target: Gauss-Hermite in direction around the posterior position
+        tr0 = TrackReport(tr.track_id, tr.t, tr.x, np.zeros((4, 4)), None, tr.cls)
+        fp = BeamFrontEnd(self.rsu, self.bore, "point")
+        d0 = fp.dedicated(tr0, [], RcsReport(0.0), t=0.0)
+        pred = fp.prediction(tr0, 0.0)
+        ref = V.rc_snr_db(TG.array_gain(d0.weights[None], [pred["u_hat"]])[0, 0], pred["u_hat"],
+                          pred["r_hat"], 0.0, pred["theta"], d0.n_re) - 3.0
+        look0 = fp.rcs_look(d0, rep, tr0)
+        np.testing.assert_allclose(look0.unit_db, ref, atol=1e-9)
 
+    def test_backend_looks_give_unbiased_rcs(self):
+        """Looks generated by the closed-loop back end at a known pose, near P_d = 0.5."""
+        rng = np.random.default_rng(23)
+        sched = CL.Scheduler(self.rsu, self.bore, rng, n_grants=4)
+        grants = sched.grants(0.0)
+        trk = TR.CVTracker(0, 0.0, (5.25, -62.0), (0.0, 8.0), self.rsu, self.bore, (4.73, 1.88),
+                           P0=np.diag([1e-4, 1e-4, 1e-4, 1e-4]))
+        tr = trk.report()
+        fe = BeamFrontEnd(self.rsu, self.bore, "extended")
+        reuse = fe.plan(tr, grants, RcsReport(-1.0), t=0.0)
+        self.assertEqual(reuse.mode, "reuse")
+        cases = [(fe.dedicated(tr, [], RcsReport(0.0), t=0.0), None), (reuse, grants[reuse.grant])]
+        back = CL.SensingBackend(self.rsu, self.bore, rng, 0.0)
+        h = TR.heading_of(tr.x, tr.P)[0]
+        for d, g in cases:
+            sig_true = float(np.interp(0.5, d.pd_curve, d.pd_curve_sigma))
+            truth = dict(xy=tr.x[:2], heading=h, extent=tr.extent, rcs=sig_true)
+            for mode in ("event+truncated", "truncated"):
+                est = RcsEstimator(static_population(sig_true + 3.0, 6.0), "car", likelihood=mode)
+                hits = 0
+                for _ in range(500):
+                    rep = back.execute(d, truth, sched, g)
+                    hits += rep.rcs_detected
+                    est.update(fe.rcs_look(d, rep, tr))
+                rep_ = est.report()
+                self.assertLess(abs(rep_.mean_dbsm - sig_true), max(0.5, 2 * rep_.sd_dbsm),
+                                (d.mode, mode, rep_.mean_dbsm, sig_true))
+                self.assertAlmostEqual(hits / 500, 0.5, delta=0.08)
 
 if __name__ == "__main__":
     unittest.main()

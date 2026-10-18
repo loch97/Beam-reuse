@@ -116,7 +116,13 @@ class SensingReport:
     ``z`` = (u, r) of the strongest detected cell, ``R`` its measurement covariance (CRB at the
     measured SNR and the grant bandwidth, plus extent glint). ``stat`` is that cell's power over
     the CFAR disturbance floor, ``eta`` the threshold on the same scale and ``floor_db`` the floor
-    over thermal noise (10 log10(1 + UE leakage)). ``snr_db`` = 10 log10(stat - 1).
+    over thermal noise (10 log10(1 + UE leakage)). ``snr_db`` = 10 log10(stat - 1). These describe
+    the strongest crossing cell and serve the tracker.
+
+    ``rcs_detected``/``rcs_stat``/``rcs_floor_db`` are reported on every look for the designated
+    cell, the dominant scatterer's receive cell. That cell is chosen independently of the data, so
+    its crossing and power are the RCS evidence. The strongest-cell values above are
+    selection-biased and are not used for RCS.
     """
 
     t: float
@@ -127,3 +133,6 @@ class SensingReport:
     stat: Optional[float] = None
     eta: Optional[float] = None
     floor_db: Optional[float] = None
+    rcs_detected: Optional[bool] = None
+    rcs_stat: Optional[float] = None
+    rcs_floor_db: Optional[float] = None

@@ -11,19 +11,31 @@ Model, from the population down to one look (all RCS values in dBsm, dominant sc
 inverse-gamma hyperprior on tau^2. The calibration has few targets per class, so tau is shrunk
 toward the hyperprior mean. The class is optional; an unknown class gives a mixture prior.
 
-``RcsEstimator`` is a grid filter over (sigma_bar, delta). Each executed look contributes
+``RcsEstimator`` is a grid filter over (sigma_bar, delta). The evidence of a look is the
+*designated cell*: the dominant scatterer's receive cell. The cell is fixed before the look, and
+the back end reports whether it crossed the threshold and its power s on every look. A look then
+contributes
 
-    p(event, s | sigma) = P_D(sigma)^det (1 - P_D(sigma))^(1-det) * [ f(s | s > eta, sigma) ]^det
+    p(det, s | sigma) = P_d(sigma)^det (1 - P_d(sigma))^(1-det) * [ f(s | s > eta, sigma) ]^det
 
-where P_D(sigma) is the front end's predicted detection probability of the executed beam as a
-function of the dominant RCS. It is averaged over the pose uncertainty at decision time and
-includes UE leakage. f(s | s > eta) = exp(-(s - eta) / m) / m is the exponential density of the
-reported cell statistic truncated at the detection threshold, with m = 1 + 10^((sigma + a) / 10)
-and a the unit-RCS cell SNR at the posterior pose. The product of the two factors is the full
-likelihood of what the back end reports. Using only the truncated factor (``likelihood="truncated"``)
-ignores misses but stays unbiased. Plain detection averages are biased high because only
-threshold crossings are kept. Beam choices depend only on past observations, so they do not bias
-the likelihood.
+Both factors come from the cell's unit-RCS SNR over the disturbance floor that the back end
+measured (CFAR), a_n at posterior pose node n with weight w_n, and m_n = 1 + 10^((sigma + a_n)/10):
+
+    P_d(sigma) = sum_n w_n exp(-eta / m_n)                      (predicted crossing probability)
+    f(s | s > eta, sigma) = sum_n w_n exp(-s / m_n) / m_n / P_d(sigma)
+
+so a crossing contributes sum_n w_n exp(-s/m_n)/m_n and a miss contributes 1 - P_d. Conditioning
+on the measured floor matters: the front end's decision-time curve (``BeamDecision.pd_curve``)
+averages the UE leakage over the UE's unknown position in its grid cell. When the actual UE
+leaks more or less than that average, the curve gives a wrong event probability and biases the
+RCS by up to 2 dB. The curve is used only when a look carries no unit-SNR nodes. A single point
+pose can sit in a pattern null and make one look dominate, which is why the pose is integrated.
+
+The strongest crossing cell, which the tracker uses, is not used here: choosing the maximum biases
+its power upward. Likewise, the union of cell crossings is not E[max_c P_c]. Plain averages of
+detected powers are biased high because only threshold crossings are kept; the truncated factor
+removes that bias, and ``likelihood="truncated"`` uses it alone. Beam choices depend only on past
+observations, so they do not bias the likelihood.
 """
 
 from collections import defaultdict
@@ -31,7 +43,7 @@ from dataclasses import dataclass
 import json
 import math
 import numpy as np
-from scipy.special import ndtr
+from scipy.special import ndtr, logsumexp
 from . import model as V
 from .interfaces import RcsReport
 from .target import FP, ROOT
@@ -115,10 +127,11 @@ def _cell_masses(edges, mean, sd):
 class RcsLook:
     """Evidence from one executed look, assembled by the front end.
 
-    ``pd_sigma``/``pd`` is the predicted P_D of the executed beam versus dominant RCS. For a
-    detection, ``stat`` is the reported cell power over the disturbance floor, ``eta`` the
-    threshold on that scale and ``unit_db`` the unit-RCS cell SNR over the floor at the posterior
-    pose.
+    ``detected`` says whether the designated cell crossed the threshold ``eta``. For a crossing,
+    ``stat`` is the cell power over the measured disturbance floor. ``unit_db``/``unit_w`` are
+    nodes and weights of the cell's unit-RCS SNR over that floor at the posterior pose; they are
+    given for misses too. ``pd_sigma``/``pd`` is the decision-time crossing curve, a fallback for
+    looks without unit nodes.
     """
 
     t: float
@@ -127,7 +140,8 @@ class RcsLook:
     pd: np.ndarray
     stat: float = None
     eta: float = None
-    unit_db: float = None
+    unit_db: np.ndarray = None
+    unit_w: np.ndarray = None
 
 
 class RcsEstimator:
@@ -188,15 +202,29 @@ class RcsEstimator:
     def log_likelihood(self, look):
         s = self.sigma()
         ll = np.zeros_like(s)
-        if self.likelihood == "event+truncated":
-            pd = np.clip(np.interp(s, look.pd_sigma, look.pd), 1e-12, 1 - 1e-12)
-            ll += np.log(pd) if look.detected else np.log1p(-pd)
-        if look.detected and look.stat is not None:
-            m = 1 + 10 ** ((s + look.unit_db) / 10)
-            ll += -(look.stat - look.eta) / m - np.log(m)
+        event = self.likelihood == "event+truncated"
+        if look.unit_db is None:
+            if event:
+                pd = np.clip(np.interp(s, look.pd_sigma, look.pd), 1e-12, 1 - 1e-12)
+                ll += np.log(pd) if look.detected else np.log1p(-pd)
+            return ll
+        a = np.atleast_1d(np.asarray(look.unit_db, float))
+        w = np.ones(len(a)) if look.unit_w is None else np.asarray(look.unit_w, float)
+        lw = np.log(w / w.sum())
+        m = 1 + 10 ** ((s[..., None] + a) / 10)
+        log_pd = logsumexp(lw - look.eta / m, axis=-1)
+        if look.detected:
+            ll += logsumexp(lw - look.stat / m - np.log(m), axis=-1)
+            if not event:
+                ll -= log_pd
+        elif event:
+            ll += np.log(-np.expm1(np.minimum(log_pd, -1e-15)))
         return ll
 
     def update(self, look):
+        """Fold in one RcsLook (``None``: no RCS evidence from this look)."""
+        if look is None:
+            return
         self.advance(look.t)
         ll = self.log_likelihood(look)
         if not np.any(ll):
