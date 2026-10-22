@@ -112,6 +112,19 @@ python -m isac.closed_loop --truth-offset-db -6 --rcs-mode design   # stress: we
 
 Settings are in `data/frontend_parameters.json`. Logs go to `outputs/closed_loop/`.
 
+### Extended target in the paper pipeline and RT check
+
+`python -m isac.simulate --target-model extended` runs the paper conditions with the multi-scatterer box in place of the point detector (`target.ExtendedDetector`), paired by seed block with the point model, and writes to `outputs/simulation_extended/`. The paper's effective RCS prior is kept: the dominant scatterer is lowered by the box's own contribution at the full-band reference cell (0–1.3 dB per frame), so the two models agree at that cell.
+
+`python -m isac.rt_extended [--paths outputs/rt/paths] [--fit-offsets]` compares the beam dependence of RT target power at the reference focus with both models, over steered, broadened and sector beams and 1/4/32 PRBs. RT paths are split into direct returns and transmit-side multipath (the transmit beam reaches the target over another reflector). The model contains only the direct returns. Vehicle extents come from the RT mesh bounding boxes. On the bundled example scene (car, t00_f0), within 20 dB of the RT peak:
+
+| Comparison | Box model | Point model |
+|---|---|---|
+| Direct paths, rms error | 0.6–0.7 dB | 2.7–2.9 dB |
+| All paths, p95 over-prediction | 2.4–3.4 dB | 6.8–7.4 dB |
+
+Transmit multipath carries up to 98–99% of the power for some off-target beams. Scatterer offsets fitted on one scene are not used; `--fit-offsets` over all 144 traced scenes is the intended calibration.
+
 ## Numerical checks
 
 ```bash
@@ -140,5 +153,6 @@ Checks cover the finite-subcarrier filter response, exact grant-selection probab
 | `rcs.py` | Hierarchical RCS prior and truncated-likelihood grid estimator |
 | `interfaces.py`, `frontend.py` | Tracker/scheduler/sensing messages and beam decision |
 | `closed_loop.py` | Simulated scheduler and sensing back end in a closed loop |
+| `rt_extended.py` | RT check of point versus box target geometry |
 
 `data/` contains the compact scientific inputs, complete plotting summaries and regression fixtures. `assets/` contains the scene meshes, paper fonts and static scene illustration. `paper/` contains the current TeX sources and figure PDFs. Large full-batch path caches and historical experiment scripts are excluded.

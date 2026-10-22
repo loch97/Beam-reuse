@@ -41,8 +41,13 @@ def compat_arrays(
     eval_levels=None,
     ue_loss_fn=None,
     predictive_screen_fn=None,
+    frame_hook=None,
 ):
-    """Evaluate beam compatibility, link costs and frozen-decision stress scores."""
+    """Evaluate beam compatibility, link costs and frozen-decision stress scores.
+
+    ``frame_hook(row, rsu, bore)``, when given, is called at the start of every frame so that a
+    target model needing the frame's pose and class can configure itself.
+    """
     P["inr"], P["sigma_x"] = (inr, sigma_x)
     meta, rsu, bore = geometry()
     if n_frames is not None:
@@ -82,6 +87,8 @@ def compat_arrays(
         return (g0, kk, b, np.array([m is not None and m[0] >= P["mcs_floor"] for m in b]))
 
     for f, row in enumerate(meta["rows"]):
+        if frame_hook is not None:
+            frame_hook(row, rsu, bore)
         keys, xy, sig_true, dom = V.vehicle_rcs(row, rsu, V.rcs_truth(recs, row["key"]))
         prior = V.rcs_prior(recs, V.aspect_bin(row["aspect_deg"]))
         u_rc, r_rc, th_rc_t, _ = V.to_polar(xy, rsu, bore, P["rsu_h"], P["rc_h"])

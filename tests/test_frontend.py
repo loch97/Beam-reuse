@@ -370,5 +370,49 @@ class PredictiveFrontEndTests(unittest.TestCase):
                                 (d.mode, mode, rep_.mean_dbsm, sig_true))
                 self.assertAlmostEqual(hits / 500, 0.5, delta=0.08)
 
+
+class RtExtendedTests(unittest.TestCase):
+    def test_vehicle_extent_from_meshes(self):
+        from isac.rt_extended import vehicle_extent
+
+        meta, _, _ = LS.geometry()
+        for row in meta["rows"]:
+            np.testing.assert_allclose(vehicle_extent(row["category"]),
+                                       row["truth_extent_LWH_m"][:2], atol=1e-5)
+
+    def test_box_fits_rt_direct_paths_better_than_point(self):
+        from types import SimpleNamespace
+        from isac import rt_extended as RX, rt_scoring as S
+
+        S.config()
+        case = json.loads((ROOT / "data/rt/protocol.json").read_text())["cases"][0]
+        data, meta = RX.load_case(ROOT / "data/example_rt", case, 16000000, 32)
+        args = SimpleNamespace(prbs=[1, 32], mono_tol=0.01, fit_db=10.0, window_db=20.0)
+        r = RX.validate_case(case, data, meta, args)
+        for prb in ("1", "32"):
+            box, point = r["prb"][prb]["box_direct"], r["prb"][prb]["point_direct"]
+            self.assertLess(box["rms_db"], 1.0)
+            self.assertLess(box["rms_db"], 0.5 * point["rms_db"])
+        CL.configure()
+
+    def test_extended_detector_matches_point_at_reference_focus(self):
+        """With no pose spread, a beam on the dominant scatterer and the calibration bandwidth,
+        the box gives the paper's effective RCS at the reference cell, hence the same P_D."""
+        CL.configure()
+        meta, rsu, bore = LS.geometry()
+        n_re = 4 * 144
+        for row in (meta["rows"][0], meta["rows"][8]):
+            det = TG.ExtendedDetector()
+            det.set_frame(row, rsu, bore)
+            self.assertGreater(det.frame["delta_db"], 0.0)
+            keys, xy, _, dom = V.vehicle_rcs(row, rsu, 0.0)
+            u, r, th, _ = V.to_polar(xy, rsu, bore, V.P["rsu_h"], V.P["rc_h"])
+            i = keys.index(dom)
+            W = V.beam(u[i])[None]
+            ext = det(W, u[i], r[i], 1e-9, -2.0, th[i], n_re, V.P["B"], s_r=1e-9, c_ur=0.0)[0]
+            point = predictive_pd(W, u[i], r[i], 0.0, -2.0, th[i], n_re, s_r=0.0)[0]
+            np.testing.assert_allclose(ext, point, atol=2e-3)
+
+
 if __name__ == "__main__":
     unittest.main()

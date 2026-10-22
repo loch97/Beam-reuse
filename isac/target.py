@@ -225,3 +225,74 @@ def extended_pd(W, nodes, n_re, bandwidth, clutter=None, focus=None, threshold=N
     screen = None if threshold is None else (threshold, np.ones(1))
     pd, upper = extended_pd_shifts(W, nodes, n_re, bandwidth, clutter, focus, (0.0,), screen)
     return pd[0], upper[0]
+
+
+class ExtendedDetector:
+    """Drop-in replacement for ``detection.predictive_pd`` in the paper's batch simulation.
+
+    The simulation predicts the dominant return's (u, r) with covariance (sigma_u, s_r, c_ur). This
+    maps that prediction to the box: the predicted reflector is the dominant face centre, and the
+    polar covariance becomes a horizontal one through the inverse Jacobian. Heading is the frame's
+    heading, known as in the paper. ``prior`` is the paper's effective RCS at the full-band reference
+    focus; the dominant scatterer RCS is lowered by the box's own corner/face contribution to that
+    focus, so both models see the same effective RCS at the reference cell.
+    ``set_frame`` must be called for every frame (``simulation_engine.compat_arrays(frame_hook=...)``).
+    """
+
+    resource_kernel_version = "extended-box-v1"
+
+    def __init__(self, threshold=None, calibration_bandwidth=None):
+        self.threshold = threshold
+        self.cal_bw = V.P["B"] if calibration_bandwidth is None else calibration_bandwidth
+        self.frame = None
+        self._nodes = {}
+
+    def set_frame(self, row, rsu, bore):
+        from .rt_extended import vehicle_extent
+
+        cls = row.get("category") or row.get("target_class")
+        L, W = vehicle_extent(cls)
+        keys, xy, sig, dom, body = box_scatterers(row["target_xy_m"], row["heading_rad"], L, W,
+                                                  rsu, 0.0)
+        u, r, th, _ = V.to_polar(xy, rsu, bore, V.P["rsu_h"], V.P["rc_h"])
+        i = keys.index(dom)
+        gain = 10 ** (sig / 10) * (r[i] / r) ** 4 * 10 ** (
+            (2 * V.elem_dbi(np.arcsin(u), th) - 2 * V.elem_dbi(np.arcsin(u[i]), th[i])) / 10)
+        focus = V.rx_rel(u[i] - u) * delay_power(r[i] - r, self.cal_bw)
+        tx = array_gain(V.beam(u[i]), u)[0] / array_gain(V.beam(u[i]), [u[i]])[0, 0]
+        self.frame = dict(rsu=np.asarray(rsu, float), bore=float(bore), heading=row["heading_rad"],
+                          extent=(L, W), body_dom=body[i],
+                          delta_db=float(10 * np.log10(np.sum(gain * focus * tx))))
+        self._nodes = {}
+
+    def nodes(self, u_hat, r_hat, sigma_u, s_r, c_ur, prior):
+        key = (u_hat, r_hat, sigma_u, s_r, c_ur, prior)
+        if key not in self._nodes:
+            fr = self.frame
+            rsu, bore = fr["rsu"], fr["bore"]
+            dh = V.P["rsu_h"] - V.P["rc_h"]
+            d2 = math.sqrt(max(r_hat**2 - dh**2, 1e-6))
+            az = math.asin(float(np.clip(u_hat, -1, 1))) + bore
+            refl = rsu + d2 * np.array([math.cos(az), math.sin(az)])
+            centre = refl - fr["body_dom"] @ rot(fr["heading"]).T
+            from .tracker import polar_jacobian
+
+            J = polar_jacobian(refl, rsu, bore)
+            Sp = np.array([[sigma_u**2, c_ur], [c_ur, s_r**2]])
+            Ji = np.linalg.inv(J)
+            if len(self._nodes) > 64:
+                self._nodes.clear()
+            self._nodes[key] = pose_nodes(centre, Ji @ Sp @ Ji.T, fr["heading"], 0.0, fr["extent"],
+                                          rsu, bore, prior - fr["delta_db"])
+        return self._nodes[key]
+
+    def __call__(self, W, u_hat, r_hat, sigma_u, sigma_prior, theta_deg, n_re, bg=None,
+                 clutter=None, s_r=None, c_ur=None):
+        s_r = V.P["sigma_r"] if s_r is None else s_r
+        c_ur = 0.0 if c_ur is None else c_ur
+        nodes = self.nodes(u_hat, r_hat, sigma_u, s_r, c_ur, sigma_prior)
+        bw = bg if bg is not None else V.P["ded_prb"] * 12 * V.P["df"]
+        pd = extended_pd(W, nodes, n_re, bw, clutter, threshold=self.threshold)[0]
+        if self.threshold is not None and clutter is not None and not (pd >= 0).any():
+            pd = np.full(len(np.atleast_2d(W)), -1.0)
+        return pd, V.db(array_gain(W, [u_hat])[:, 0])

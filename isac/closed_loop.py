@@ -25,11 +25,12 @@ from .frontend import BeamFrontEnd
 from .interfaces import GrantReport, SensingReport
 from .target import box_scatterers, array_gain, FP
 from .rcs import RcsPopulation, RcsEstimator
+from .rt_extended import vehicle_extent
 from .tracker import CVTracker, crb_polar, glint_polar
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "outputs/closed_loop"
-EXTENT = {"car": (4.7295, 1.884), "bus": (11.995, 2.642), "truck": (8.0, 2.5)}
+EXTENT = {c: vehicle_extent(c) for c in ("car", "bus", "truck")}  # RT mesh bounding boxes
 
 
 def configure():
