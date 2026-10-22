@@ -111,6 +111,22 @@ class RcsPopulation:
         return cls(mu, sd, w, math.sqrt(tau2), math.sqrt(omega2), rho,
                    _frame_dt() if frame_dt is None else frame_dt)
 
+    @classmethod
+    def from_priors(cls, priors, omega=None, rho_frame=0.0, frame_dt=None, weights=None):
+        """Population from explicit per-class priors {class: (mean_dbsm, sd_dbsm)}.
+
+        For deployments whose calibration differs from the paper's (e.g. another RT scene).
+        ``omega`` is the within-target aspect spread (default ``rcs_omega0_db``), ``rho_frame``
+        its correlation over ``frame_dt`` seconds; ``weights`` the class mixture used when the
+        track's class is unknown (default uniform).
+        """
+        mu = {c: float(m) for c, (m, _) in priors.items()}
+        sd = {c: float(s) for c, (_, s) in priors.items()}
+        w = weights or {c: 1.0 / len(priors) for c in priors}
+        return cls(mu, sd, dict(w), float(np.sqrt(np.mean([s * s for s in sd.values()]))),
+                   FP["rcs_omega0_db"] if omega is None else float(omega), float(rho_frame),
+                   _frame_dt() if frame_dt is None else float(frame_dt))
+
     def class_weights(self, cls=None):
         if cls in self.mu:
             return {cls: 1.0}

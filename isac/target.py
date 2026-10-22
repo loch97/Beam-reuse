@@ -34,7 +34,9 @@ def rot(h):
 def box_scatterers(center, heading, L, W, rsu, sig_dom, offsets=None):
     """Visible box scatterers. Same construction as ``model.vehicle_rcs``.
 
-    Returns (keys, xy, sigma_dbsm, dominant key, body-frame offsets).
+    Returns (keys, xy, sigma_dbsm, dominant key, body-frame offsets). When no face is visible (the
+    RSU lies inside the box, e.g. a ghost track next to the RSU) all are empty and the dominant key
+    is None; callers fall back to a point target.
     """
     off = FP["scatterer_offsets_db"] if offsets is None else offsets
     c = np.asarray(center, float)
@@ -60,6 +62,8 @@ def box_scatterers(center, heading, L, W, rsu, sig_dom, offsets=None):
         for s in (-1, 1):
             corner = cf + s * half
             pts["k_%.2f_%.2f" % tuple(corner)] = corner
+    if dom is None:
+        return [], np.zeros((0, 2)), np.zeros(0), None, np.zeros((0, 2))
     keys = list(pts)
     xy = np.array([pts[k] for k in keys])
     sig = np.array(
@@ -113,6 +117,8 @@ def pose_nodes(mean_xy, cov_xy, heading, heading_std, extent, rsu, bore, sig_dom
     h_rc = V.P["rc_h"] if h_rc is None else h_rc
     L, W = extent
     keys, _, sig, dom, body = box_scatterers(mean_xy, heading, L, W, rsu, sig_dom)
+    if dom is None:
+        raise ValueError("no visible box face: the RSU lies inside the target box")
     lam, E = np.linalg.eigh(0.5 * (cov_xy + np.asarray(cov_xy).T))
     lam = np.maximum(lam, 0.0)
     grad = _u_gradient(mean_xy, rsu, bore)

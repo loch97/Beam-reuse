@@ -17,12 +17,28 @@ from .target import FP, box_scatterers
 
 
 def polar_jacobian(xy, rsu, bore):
-    """d(u, r)/d(px, py) at reflector position ``xy``; rows (u, r)."""
+    """d(u, r)/d(px, py) at reflector position ``xy``; rows (u, r).
+
+    Analytic for the paper's u = sin(azimuth - boresight); central differences of the active
+    ``model.to_polar`` otherwise (e.g. the cone angle of ``site.SiteConfig``).
+    """
+    from .site import cone_to_polar
+
+    if V.to_polar is cone_to_polar:
+        h, out = 1e-4, np.zeros((2, 2))
+        for k in range(2):
+            dp = np.zeros(2)
+            dp[k] = h
+            out[:, k] = (polar(np.asarray(xy, float) + dp, rsu, bore)
+                         - polar(np.asarray(xy, float) - dp, rsu, bore)) / (2 * h)
+        return out
     d = np.asarray(xy, float) - rsu
+    a = np.array([-math.sin(bore), math.cos(bore)])
+    if float(np.hypot(*d)) < 1e-3:  # reflector at the RSU mast (ghost track): use the boresight side
+        d = 1e-3 * np.array([math.cos(bore), math.sin(bore)])
     h = float(np.hypot(*d))
     n = d / h
     r = math.hypot(h, V.P["rsu_h"] - V.P["rc_h"])
-    a = np.array([-math.sin(bore), math.cos(bore)])
     return np.vstack([(a - float(a @ n) * n) / h, d / r])
 
 
@@ -108,6 +124,8 @@ class CVTracker:
         """Body offsets of the visible scatterers at the current mean pose, and the dominant index."""
         h, _ = heading_of(self.x, self.P)
         keys, xy, _, dom, _ = box_scatterers(self.x[:2], h, *self.extent, self.rsu, 0.0)
+        if dom is None:
+            return np.zeros((1, 2)), 0
         return xy - self.x[:2], keys.index(dom)
 
     def update(self, report):

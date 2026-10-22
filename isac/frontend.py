@@ -29,21 +29,56 @@ Two P_D notions are kept apart:
 
 P_D values are compared with ``tau`` after rounding to ``PD_DECIMALS``. Batch-dependent last-bit
 noise then cannot change feasibility or tie-breaks between lazy and exhaustive evaluation.
+
+Deployment and calibration (``site=SiteConfig(...)``, see ``site.py``): every public call runs with
+the site's parameters applied. P_D is averaged over the RCS nodes combined with the site's SNR
+calibration nodes (``snr_offset_db``, ``snr_sigma_db``).
+
+Measurement quality (``SensingRequirement``, via ``TrackReport.requirement`` or ``plan(...,
+requirement=)``): P_D >= tau only says some cell is detected. A requirement adds a bound on the
+predicted strongest-cell SNR and/or on the expected number of cells above a quality SNR. The
+cheapest candidate meeting both is chosen; every decision reports ``pred_cell_snr_db`` and
+``exp_quality_cells``. ``plan(..., return_table=True)`` evaluates all admissible candidates and
+returns them in ``BeamDecision.candidates`` for reuse/accuracy trade-off studies.
+
+A box with no face visible from the RSU (e.g. a ghost track next to the RSU) is handled as a point
+target for that prediction.
 """
+
+import functools
 
 import math
 import numpy as np
 from scipy.special import ndtri
 from . import model as V
 from .detection import predictive_pd
-from .interfaces import BeamDecision
+from .interfaces import BeamDecision, RcsReport
 from .quadrature import UELossCache
 from .rcs import RcsLook
 from .target import FP, box_scatterers, pose_nodes, extended_pd_shifts, cell_snr, array_gain
 from .tracker import heading_of, predict_state, polar_jacobian
+from .detection import delay_power
 
 SEQUENTIAL = (11, 13)
 PD_DECIMALS = 12
+PAPER_RCS_PRIOR_DBSM = -1.10319987650635  # main_calibration.json prior_dbsm
+
+
+def _in_site(fn):
+    """Run a public front-end method with the front end's site applied (re-entrant)."""
+
+    @functools.wraps(fn)
+    def wrapper(self, *args, **kwargs):
+        if self.site is None or self._depth:
+            return fn(self, *args, **kwargs)
+        with self.site.active():
+            self._depth += 1
+            try:
+                return fn(self, *args, **kwargs)
+            finally:
+                self._depth -= 1
+
+    return wrapper
 
 
 def curve_sigma():
@@ -52,10 +87,19 @@ def curve_sigma():
 
 
 class BeamFrontEnd:
-    def __init__(self, rsu, bore, target_model="extended", tau=0.9, levels=SEQUENTIAL,
-                 ue_vehicle_rcs_dbsm=0.0, rcs_mode=None, lazy=True):
+    """Beam front end. ``rsu``/``bore`` may come from ``site`` (``SiteConfig``) instead."""
+
+    def __init__(self, rsu=None, bore=None, target_model="extended", tau=0.9, levels=SEQUENTIAL,
+                 ue_vehicle_rcs_dbsm=0.0, rcs_mode=None, lazy=True, site=None):
         if target_model not in ("extended", "point"):
             raise ValueError(target_model)
+        self.site, self._depth = site, 0
+        if rsu is None:
+            rsu = site.rsu_xy if site is not None else None
+        if bore is None:
+            bore = site.boresight_rad if site is not None else None
+        if rsu is None or bore is None:
+            raise ValueError("rsu and bore are required (directly or through site)")
         self.rcs_mode = FP["rcs_mode"] if rcs_mode is None else rcs_mode
         if self.rcs_mode not in ("predictive", "design"):
             raise ValueError(self.rcs_mode)
@@ -64,6 +108,11 @@ class BeamFrontEnd:
         self.ue_rcs = ue_vehicle_rcs_dbsm
         lvl_tags, self.cand_level = V.levels()
         self.stages = [tuple(lvl_tags[i]) for i in levels]
+        m = site.overrides().get("M", V.P["M"]) if site is not None else V.P["M"]
+        sector = any(t >= 100 for st in self.stages for t in st)
+        if sector and len(next(iter(V.sector_codebook().values()))) != m:
+            raise ValueError(f"the sector codebook is for {V.P['M']} elements, not M={m}; "
+                             "use levels without sector beams (e.g. (2, 13))")
         self.ue_loss = UELossCache()
         x, w = np.polynomial.legendre.leggauss(V.P["n_ue_clut"])
         self._clut_x, self._clut_w = x, w / 2
@@ -71,6 +120,7 @@ class BeamFrontEnd:
         self._cell_q = 2 * (np.arange(n) + 0.5) / n - 1
 
     # -- tracker side -------------------------------------------------------------------------
+    @_in_site
     def prediction(self, track, t):
         """Predicted pose and the uncertainty the detector integrates over, at time ``t``.
 
@@ -82,10 +132,14 @@ class BeamFrontEnd:
             h, sh = track.heading, track.heading_std or 0.0
         else:
             h, sh = heading_of(x, P)
-        extent = track.extent
+        extent, degenerate = track.extent, False
         if extent is not None:
             keys, xy, _, dom, _ = box_scatterers(x[:2], h, *extent, self.rsu, 0.0)
-            refl = xy[keys.index(dom)]
+            if dom is None:
+                extent, degenerate = None, True
+                refl = x[:2]
+            else:
+                refl = xy[keys.index(dom)]
         else:
             refl = x[:2]
         J = polar_jacobian(refl, self.rsu, self.bore)
@@ -103,20 +157,38 @@ class BeamFrontEnd:
             s_r=math.sqrt(Sig[1, 1]),
             c_ur=float(Sig[0, 1]),
             extent=extent,
+            degenerate_box=degenerate,
         )
         if self.target_model == "extended" and extent is not None:
             pred["nodes"] = pose_nodes(x[:2], P[:2, :2], h, sh, extent, self.rsu, self.bore, 0.0)
         return pred
 
-    def rcs_nodes(self, rcs):
-        """RCS values (dBsm) and weights the predicted P_D is averaged over."""
+    def default_rcs(self):
+        prior = self.site.rcs_prior_dbsm if self.site is not None else None
+        return RcsReport(PAPER_RCS_PRIOR_DBSM if prior is None else prior)
+
+    def rcs_nodes(self, rcs, calibrated=True):
+        """RCS values (dBsm) and weights the predicted P_D is averaged over.
+
+        With ``calibrated`` the site's SNR calibration nodes are folded in: offsets add to the
+        RCS (dB) and weights multiply, so P_D is averaged over both uncertainties.
+        """
         if self.rcs_mode == "predictive" and rcs.nodes_dbsm is not None and len(rcs.nodes_dbsm):
             sig = np.asarray(rcs.nodes_dbsm, float)
             w = np.ones(len(sig)) if rcs.weights is None else np.asarray(rcs.weights, float)
             if not (w.shape == sig.shape and np.all(w >= 0) and w.sum() > 0):
                 raise ValueError("RcsReport weights must be non-negative, match nodes and sum > 0")
-            return sig, w / w.sum()
-        return np.array([rcs.design_dbsm], float), np.ones(1)
+            sig, w = sig, w / w.sum()
+        else:
+            sig, w = np.array([rcs.design_dbsm], float), np.ones(1)
+        if calibrated and self.site is not None:
+            off, wo = self.site.snr_nodes()
+            sig = (sig[:, None] + off[None, :]).ravel()
+            w = (w[:, None] * wo[None, :]).ravel()
+        return sig, w
+
+    def snr_offset(self):
+        return self.site.snr_offset_db if self.site is not None else 0.0
 
     def pd_shifts(self, W, pred, n_re, bandwidth, clutter, sigma, screen=None):
         """P_D at each dominant RCS in ``sigma``: array (len(sigma), beams).
@@ -146,15 +218,62 @@ class BeamFrontEnd:
         nodes, whatever the decision model. Without an extent it is the point detector.
         """
         grid = curve_sigma()
+        model_grid = grid - self.snr_offset()
         if pred["extent"] is None:
-            return grid, self.pd_shifts(W, pred, n_re, bandwidth, clutter, grid)[:, 0]
+            return grid, self.pd_shifts(W, pred, n_re, bandwidth, clutter, model_grid)[:, 0]
         nodes = pred.get("nodes")
         if nodes is None:
             nodes = pose_nodes(pred["x"][:2], pred["P"][:2, :2], pred["heading"],
                                pred["heading_std"], pred["extent"], self.rsu, self.bore, 0.0)
         pd = extended_pd_shifts(np.atleast_2d(W), nodes, n_re, bandwidth, clutter,
-                                focus="dominant", shifts_db=grid)[0]
+                                focus="dominant", shifts_db=model_grid)[0]
         return grid, pd[:, 0]
+
+    def quality(self, W, pred, n_re, bandwidth, clutter, sigma, weights, quality_snr_db=None):
+        """Predicted measurement quality per beam.
+
+        Returns (E[strongest-cell SNR] in dB, E[number of cells with SNR >= quality_snr_db]).
+        SNR is over noise plus the mean UE leakage of the clutter quadrature; expectations are
+        over pose nodes and the RCS (and calibration) nodes. The count is NaN without a quality
+        SNR. A point target has one cell.
+        """
+        W = np.atleast_2d(W)
+        if "nodes" in pred:
+            nodes = pred["nodes"]
+            rho = cell_snr(W, nodes, n_re, bandwidth)
+            cu_n, cr_n, wn = nodes.u, nodes.r, nodes.w
+        else:
+            z, wn = V.pointing_nodes(pred["s_u"])
+            uz = pred["u_hat"] + pred["s_u"] * z
+            rho = 10 ** (V.rc_snr_db(array_gain(W, uz), uz, pred["r_hat"], 0.0, pred["theta"],
+                                     n_re) / 10)[:, :, None]
+            cu_n, cr_n = uz[:, None], np.full((len(uz), 1), pred["r_hat"])
+        leak = 0.0
+        if clutter is not None:
+            cu, cr, cs, ct = clutter[:4]
+            cu = np.atleast_1d(cu)
+            cw = np.asarray(clutter[4]) if len(clutter) > 4 else np.ones(len(cu)) / len(cu)
+            cp = 10 ** (V.rc_snr_db(array_gain(W, cu), cu, cr, cs, ct, n_re) / 10)
+            resp = V.rx_rel(cu_n[None] - cu[:, None, None]) * delay_power(cr_n - cr, bandwidth)
+            leak = np.einsum("bq,q,qnk->bnk", cp, cw, resp)
+        sinr = 10 * np.log10(np.maximum(rho / (1 + leak), 1e-30))
+        snr = sinr.max(axis=2) @ wn + float(weights @ sigma)
+        if quality_snr_db is None:
+            return snr, np.full(len(W), np.nan)
+        cells = sum(wk * ((sinr + s >= quality_snr_db).sum(axis=2) @ wn)
+                    for s, wk in zip(sigma, weights))
+        return snr, cells
+
+    @staticmethod
+    def meets(req, snr, cells):
+        if req is None or not req.active():
+            return True
+        ok = True
+        if req.min_cell_snr_db is not None:
+            ok &= snr >= req.min_cell_snr_db
+        if req.min_cells is not None and req.quality_snr_db is not None:
+            ok &= cells >= req.min_cells
+        return bool(ok)
 
     def detect(self, W, pred, n_re, bandwidth, clutter, sigma, weights, threshold=None):
         """RCS-averaged predicted P_D per beam (-1 for beams screened out by ``threshold``)."""
@@ -163,6 +282,7 @@ class BeamFrontEnd:
         return np.where((pd < 0).any(axis=0), -1.0, weights @ pd)
 
     # -- scheduler side -----------------------------------------------------------------------
+    @_in_site
     def ue_knowledge(self, g):
         """UE design window, gain-loss directions and clutter quadrature for a grant."""
         g0 = V.GRID[g.k0]
@@ -174,8 +294,9 @@ class BeamFrontEnd:
                 w / math.sqrt(math.pi)
         if g.ue_u is not None:
             return (g.ue_u, g.ue_u, g.ue_u), np.array([g.ue_u]), np.array([g.ue_u]), np.ones(1)
-        uq = g0 + self._cell_q / 64
-        return (g0, g0 - 1 / 64, g0 + 1 / 64), uq, g0 + self._clut_x / 64, self._clut_w
+        half = 1 / (2 * V.M)  # half the grid-beam cell (1/64 for the paper's M = 32)
+        uq = g0 + self._cell_q * half
+        return (g0, g0 - half, g0 + half), uq, g0 + self._clut_x * half, self._clut_w
 
     def clutter(self, g):
         if not V.P["ue_clutter"]:
@@ -184,6 +305,7 @@ class BeamFrontEnd:
         sig_ue = V.P["sigma_ped_dbsm"] if g.ue_kind != "vehicle" else self.ue_rcs
         return (cu, g.ue_range_m, sig_ue, g.ue_theta_deg, cw)
 
+    @_in_site
     def evaluate_grant(self, g, pred):
         """Admissible candidates of one grant with loss and MCS cost; P_D is filled lazily."""
         ue_ctrl, uq, _, _ = self.ue_knowledge(g)
@@ -207,7 +329,19 @@ class BeamFrontEnd:
         se = np.array([m[2] if m is not None else np.nan for m in mcs])
         return dict(W=W, tag=tag, loss=loss, ok=ok, pd=np.full(len(W), np.nan), dse=m0[2] - se,
                     n_re=g.n_prb * 12 * g.n_sym, bw=g.n_prb * 12 * V.P["df"], mcs=mcs,
-                    clutter=self.clutter(g))
+                    clutter=self.clutter(g), q_snr=np.full(len(W), np.nan),
+                    q_cells=np.full(len(W), np.nan))
+
+    def _fill_quality(self, rows, pairs, sigma, weights, s_q):
+        todo = {}
+        for i, c in pairs:
+            if np.isnan(rows[i][3]["q_snr"][c]):
+                todo.setdefault(i, []).append(c)
+        for i, cs in todo.items():
+            _, _, pred, e = rows[i]
+            cs = np.array(sorted(cs))
+            e["q_snr"][cs], e["q_cells"][cs] = self.quality(
+                e["W"][cs], pred, e["n_re"], e["bw"], e["clutter"], sigma, weights, s_q)
 
     def _fill_pd(self, rows, pairs, sigma, weights):
         """Evaluate predicted P_D for the (row, candidate) pairs that have none yet."""
@@ -223,8 +357,18 @@ class BeamFrontEnd:
         return sum(len(cs) for cs in todo.values())
 
     # -- decision -----------------------------------------------------------------------------
-    def plan(self, track, grants, rcs, t=None):
-        """BeamDecision for one sensing opportunity from a TrackReport, GrantReports and RcsReport."""
+    @_in_site
+    def plan(self, track, grants, rcs=None, t=None, requirement=None, return_table=False):
+        """BeamDecision for one sensing opportunity from a TrackReport, GrantReports and RcsReport.
+
+        ``rcs`` defaults to the site's (or the paper's) design RCS. ``requirement`` overrides
+        ``track.requirement``. ``return_table`` evaluates every admissible candidate and returns
+        them in ``BeamDecision.candidates``.
+        """
+        rcs = self.default_rcs() if rcs is None else rcs
+        req = requirement if requirement is not None else getattr(track, "requirement", None)
+        req = req if req is not None and req.active() else None
+        s_q = req.quality_snr_db if req is not None else None
         sigma, weights = self.rcs_nodes(rcs)
         rows = []
         for i, g in enumerate(grants):
@@ -232,9 +376,12 @@ class BeamFrontEnd:
             rows.append((i, g, pred, self.evaluate_grant(g, pred)))
         n_cand = sum(int(e["ok"].sum()) for *_, e in rows)
         n_eval = 0
-        if not self.lazy:
-            n_eval += self._fill_pd(rows, [(i, c) for i, _, _, e in rows
-                                           for c in np.flatnonzero(e["ok"])], sigma, weights)
+        admissible = [(i, c) for i, _, _, e in rows for c in np.flatnonzero(e["ok"])]
+        if not self.lazy or return_table:
+            n_eval += self._fill_pd(rows, admissible, sigma, weights)
+        if return_table:
+            self._fill_quality(rows, admissible, sigma, weights, s_q)
+        table = self._table(rows, admissible) if return_table else None
         for stage in self.stages:
             pool = {}
             for i, g, pred, e in rows:
@@ -245,12 +392,18 @@ class BeamFrontEnd:
                 n_eval += self._fill_pd(rows, group, sigma, weights)
                 q = {ic: round(float(rows[ic[0]][3]["pd"][ic[1]]), PD_DECIMALS) for ic in group}
                 feasible = [ic for ic in group if q[ic] >= self.tau]
+                if feasible and req is not None:
+                    self._fill_quality(rows, feasible, sigma, weights, s_q)
+                    feasible = [ic for ic in feasible
+                                if self.meets(req, rows[ic[0]][3]["q_snr"][ic[1]],
+                                              rows[ic[0]][3]["q_cells"][ic[1]])]
                 if not feasible:
                     continue
                 i, c = min(feasible, key=lambda ic: (-q[ic], rows[ic[0]][3]["loss"][ic[1]],
                                                      ic[0], ic[1]))
                 _, g, pred, e = rows[i]
                 W = e["W"][c]
+                self._fill_quality(rows, [(i, c)], sigma, weights, s_q)
                 grid, curve = self.evidence_curve(W, pred, e["n_re"], e["bw"], e["clutter"])
                 return BeamDecision(
                     "reuse",
@@ -272,13 +425,40 @@ class BeamFrontEnd:
                     rcs_mean_dbsm=float(weights @ sigma),
                     n_candidates=n_cand,
                     info=dict(stage=stage, rcs_source=rcs.source, n_evaluated=n_eval,
-                              rcs_nodes=sigma.tolist(), rcs_weights=weights.tolist()),
+                              rcs_nodes=sigma.tolist(), rcs_weights=weights.tolist(),
+                              degenerate_box=pred["degenerate_box"]),
+                    pred_cell_snr_db=float(e["q_snr"][c]),
+                    exp_quality_cells=float(e["q_cells"][c]),
+                    requirement_met=None if req is None else True,
+                    candidates=table,
                     **self._pred_fields(pred),
                 )
-        return self.dedicated(track, grants, rcs, t, n_cand, n_eval)
+        d = self.dedicated(track, grants, rcs, t, n_cand, n_eval, requirement=req)
+        d.candidates = table
+        return d
 
-    def dedicated(self, track, grants, rcs, t=None, n_cand=0, n_eval=0):
+    @staticmethod
+    def _table(rows, pairs):
+        """Admissible candidates as arrays (grant, ue_id, tag, loss_db, mcs, dse, cost_bits, pd,
+        pred_cell_snr_db, exp_quality_cells, weights)."""
+        cols = {k: [] for k in ("grant", "ue_id", "tag", "loss_db", "mcs", "dse", "cost_bits", "pd",
+                                "pred_cell_snr_db", "exp_quality_cells", "weights")}
+        for i, c in pairs:
+            _, g, _, e = rows[i]
+            for k, v in (("grant", i), ("ue_id", g.ue_id), ("tag", int(e["tag"][c])),
+                         ("loss_db", float(e["loss"][c])), ("mcs", e["mcs"][c][0]),
+                         ("dse", float(e["dse"][c])), ("cost_bits", float(e["n_re"] * e["dse"][c])),
+                         ("pd", float(e["pd"][c])), ("pred_cell_snr_db", float(e["q_snr"][c])),
+                         ("exp_quality_cells", float(e["q_cells"][c])), ("weights", e["W"][c])):
+                cols[k].append(v)
+        return {k: np.array(v) for k, v in cols.items()}
+
+    @_in_site
+    def dedicated(self, track, grants, rcs=None, t=None, n_cand=0, n_eval=0, requirement=None):
+        rcs = self.default_rcs() if rcs is None else rcs
         t = (grants[0].t if grants else track.t) if t is None else t
+        req = requirement if requirement is not None else getattr(track, "requirement", None)
+        req = req if req is not None and req.active() else None
         sigma, weights = self.rcs_nodes(rcs)
         pred = self.prediction(track, t)
         Wd = np.array([V.beam(pred["u_hat"]), V.beam(pred["u_hat"], V.P["q_wide"])])
@@ -286,6 +466,8 @@ class BeamFrontEnd:
         pd = self.detect(Wd, pred, n_re, bw, None, sigma, weights)
         c = int(np.argmax(pd))
         grid, curve = self.evidence_curve(Wd[c], pred, n_re, bw, None)
+        snr, cells = self.quality(Wd[c], pred, n_re, bw, None, sigma, weights,
+                                  req.quality_snr_db if req is not None else None)
         se_ref = (np.mean([next(m for m in V.MCS if m[0] == g.mcs)[2] for g in grants])
                   if grants else 0.0)
         return BeamDecision(
@@ -303,24 +485,35 @@ class BeamFrontEnd:
             rcs_mean_dbsm=float(weights @ sigma),
             n_candidates=n_cand,
             info=dict(meets_tau=bool(pd[c] >= self.tau), rcs_source=rcs.source,
-                      n_evaluated=n_eval, rcs_nodes=sigma.tolist(), rcs_weights=weights.tolist()),
+                      n_evaluated=n_eval, rcs_nodes=sigma.tolist(), rcs_weights=weights.tolist(),
+                      degenerate_box=pred["degenerate_box"]),
+            pred_cell_snr_db=float(snr[0]),
+            exp_quality_cells=float(cells[0]),
+            requirement_met=None if req is None else self.meets(req, snr[0], cells[0]),
             **self._pred_fields(pred),
         )
 
     # -- evidence for the RCS estimator -------------------------------------------------------
+    @_in_site
     def rcs_look(self, d, rep, track):
         """RcsLook from an executed decision, its SensingReport and the updated TrackReport.
 
         The evidence is the designated cell's crossing and power (``rep.rcs_*``), on every look.
-        Its unit-RCS SNR over the measured floor is integrated over the posterior pose: cell quadrature of ``track.P`` and heading for a
-        box, Gauss-Hermite in direction for a point target. Returns None when the back end
-        reported no designated-cell evidence.
+        Its unit-RCS SNR over the measured floor is integrated over the posterior pose: cell
+        quadrature of ``track.P`` and heading for a box, Gauss-Hermite in direction for a point
+        target (also used when no box face is visible). The site's ``snr_offset_db`` is removed,
+        so the posterior is in calibrated RCS. Returns None when the back end reported no
+        designated-cell evidence.
         """
         if rep.rcs_detected is None:
             return None
         look = RcsLook(d.t, bool(rep.rcs_detected), d.pd_curve_sigma, d.pd_curve)
-        floor = float(rep.rcs_floor_db or 0.0)
-        if track.extent is not None:
+        floor = float(rep.rcs_floor_db or 0.0) + self.snr_offset()
+        box = track.extent is not None
+        if box:
+            h0 = track.heading if track.heading is not None else heading_of(track.x, track.P)[0]
+            box = box_scatterers(track.x[:2], h0, *track.extent, self.rsu, 0.0)[3] is not None
+        if box:
             if track.heading is not None:
                 h, sh = track.heading, track.heading_std or 0.0
             else:

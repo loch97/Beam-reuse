@@ -112,6 +112,27 @@ python -m isac.closed_loop --truth-offset-db -6 --rcs-mode design   # stress: we
 
 Settings are in `data/frontend_parameters.json`. Logs go to `outputs/closed_loop/`.
 
+### Using the front end at another site (external integration)
+
+Construct `BeamFrontEnd(site=SiteConfig(...))` (`isac/site.py`) instead of patching `model` globals. The site is applied only during each front-end call and restored afterwards. Every `SiteConfig` field defaults to `None`, which keeps the paper value, so the paper pipeline and its tests are unchanged.
+
+| Group | `SiteConfig` fields |
+|---|---|
+| Geometry | `rsu_xy`, `boresight_rad`, `rsu_h`, `rc_h`, `ue_h`, `cone_angle` |
+| Radio | `M`, `M_rx`, `fc`, `p_ref_dbm` or `eirp_dbm`, `nf_rx`, `nf_ue`, `noise_bw` (separate from `df`), `df`, `l_proc`, `inr`, `element_pattern`, `e_max` |
+| Detection and calibration | `pfa`, `snr_offset_db`, `snr_sigma_db`, `sigma_hermite_nodes` |
+| Scene | `rcs_prior_dbsm`, `interference`, `ue_clutter`, `extra` (any further `model.P` key) |
+
+- **Cone angle:** `cone_angle=True` gives u = cos(elevation)·sin(azimuth − boresight), the angle a horizontal ULA actually sees. `model.beam(u)` then reaches the full array gain.
+- **Calibration:** `snr_offset_db` subtracts a fitted model-minus-RT offset from the target SNR. `snr_sigma_db` integrates a log-normal SNR uncertainty into the predicted P_D with Gauss–Hermite nodes.
+- **Sector beams:** they require M = 32 (the codebook); with another M use levels without sectors.
+
+Measurement quality: `SensingRequirement(min_cell_snr_db, quality_snr_db, min_cells)` is passed as `TrackReport.requirement` or as `plan(..., requirement=)`. The front end then picks the cheapest candidate with P_D ≥ τ that also meets the requirement. Every `BeamDecision` reports `pred_cell_snr_db` (strongest scatterer-cell SNR over noise plus UE leakage, averaged in dB) and `exp_quality_cells` (expected number of cells at or above `quality_snr_db`). It also reports `requirement_met`, which is None when no requirement was given. `plan(..., return_table=True)` fills `BeamDecision.candidates` with every admissible candidate: grant, ue_id, tag, loss_db, mcs, dse, cost_bits, pd, pred_cell_snr_db, exp_quality_cells, weights.
+
+RCS: `RcsPopulation.from_priors({cls: (mean, sd)}, omega, rho_frame)` sets per-class priors for another scene. `RcsEstimator(pop, cls)` counts misses and uses the threshold-truncated likelihood. `RcsReport` carries the posterior mean, sd and nodes. Its evidence is the designated (dominant-scatterer) cell, so a back end must fill `SensingReport.rcs_detected`, `rcs_stat` and `rcs_floor_db` for that cell on every look; `BeamFrontEnd.rcs_look` turns them into an `RcsLook`. With `snr_offset_db` set, the evidence is offset too, so the posterior is in calibrated RCS.
+
+Robustness and geometry: a box with no face visible from the RSU (a ghost track at or next to the mast) is handled as a point target, flagged as `info["degenerate_box"]`. `site.road_points(origin, heading, lane_offsets, s_range, spacing, kinds)` places served UEs along a road of any direction. `site.ue_link_site(xy, kind, rsu, bore, rng, interference_dbm=None)` gives serving-grid SINR and grid beam without the corridor geometry, with optional external interference.
+
 ### Extended target in the paper pipeline and RT check
 
 `python -m isac.simulate --target-model extended` runs the paper conditions with the multi-scatterer box in place of the point detector (`target.ExtendedDetector`), paired by seed block with the point model, and writes to `outputs/simulation_extended/`. The paper's effective RCS prior is kept: the dominant scatterer is lowered by the box's own contribution at the full-band reference cell (0–1.3 dB per frame), so the two models agree at that cell.

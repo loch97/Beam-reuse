@@ -18,6 +18,26 @@ import numpy as np
 
 
 @dataclass
+class SensingRequirement:
+    """Back-end measurement-quality need for one look, in addition to P_D >= tau.
+
+    ``min_cell_snr_db``: the predicted SNR (over noise plus UE leakage) of the strongest scatterer
+    cell, averaged in dB over pose and RCS uncertainty, must reach this value.
+    ``min_cells`` with ``quality_snr_db``: the expected number of scatterer cells whose SNR reaches
+    ``quality_snr_db`` must be at least ``min_cells``.
+    Fields left at None impose nothing.
+    """
+
+    min_cell_snr_db: Optional[float] = None
+    quality_snr_db: Optional[float] = None
+    min_cells: Optional[float] = None
+
+    def active(self):
+        return self.min_cell_snr_db is not None or (
+            self.min_cells is not None and self.quality_snr_db is not None)
+
+
+@dataclass
 class TrackReport:
     """Tracker output for one target at time ``t``.
 
@@ -34,6 +54,7 @@ class TrackReport:
     cls: Optional[str] = None
     heading: Optional[float] = None
     heading_std: Optional[float] = None
+    requirement: Optional[SensingRequirement] = None
 
 
 @dataclass
@@ -107,6 +128,10 @@ class BeamDecision:
     rcs_mean_dbsm: float = float("nan")
     n_candidates: int = 0
     info: dict = field(default_factory=dict)
+    pred_cell_snr_db: float = float("nan")
+    exp_quality_cells: float = float("nan")
+    requirement_met: Optional[bool] = None
+    candidates: Optional[dict] = None
 
 
 @dataclass

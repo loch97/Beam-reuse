@@ -414,5 +414,171 @@ class RtExtendedTests(unittest.TestCase):
             np.testing.assert_allclose(ext, point, atol=2e-3)
 
 
+
+class SiteInterfaceTests(unittest.TestCase):
+    """Injected site/model configuration, quality requirements and robustness (P1-P6)."""
+
+    @classmethod
+    def setUpClass(cls):
+        from isac.site import SiteConfig
+
+        CL.configure()
+        cls.SiteConfig = SiteConfig
+        cls.meta, cls.rsu, cls.bore = LS.geometry()
+        rng = np.random.default_rng(5)
+        cls.grants = CL.Scheduler(cls.rsu, cls.bore, rng, n_grants=4).grants(0.4)
+        cls.trk = TR.CVTracker(0, 0.0, (5.25, -62.0), (0.0, 8.0), cls.rsu, cls.bore,
+                               (4.73, 1.88), P0=np.diag([0.3, 0.3, 0.2, 0.2]))
+        cls.rcs = RcsReport(-1.0, 0.5, 0, "x", np.array([-3.0, 0.0, 3.0]), np.ones(3) / 3)
+
+    def _same(self, a, b):
+        self.assertEqual((a.mode, a.grant, a.tag), (b.mode, b.grant, b.tag))
+        self.assertAlmostEqual(a.pd_pred, b.pd_pred, places=12)
+
+    def test_default_and_paper_valued_site_reproduce_decision(self):
+        ref = BeamFrontEnd(self.rsu, self.bore).plan(self.trk.report(), self.grants, self.rcs)
+        d0 = BeamFrontEnd(site=self.SiteConfig(rsu_xy=self.rsu, boresight_rad=self.bore)).plan(
+            self.trk.report(), self.grants, self.rcs)
+        self._same(ref, d0)
+        P0, noise = dict(V.P), V.NOISE_RX
+        paper = self.SiteConfig(rsu_xy=self.rsu, boresight_rad=self.bore, rsu_h=V.P["rsu_h"],
+                                rc_h=V.P["rc_h"], M=32, M_rx=32, fc=V.P["fc"],
+                                p_ref_dbm=V.P["p_ref_dbm"], nf_rx=V.P["nf_rx"],
+                                noise_bw=V.P["B"], l_proc=V.P["l_proc"], inr=V.P["inr"],
+                                pfa=V.P["pfa"])
+        self.assertFalse(paper.is_default())
+        d1 = BeamFrontEnd(site=paper).plan(self.trk.report(), self.grants, self.rcs)
+        self._same(ref, d1)
+        self.assertEqual(V.P, P0)  # globals restored
+        self.assertEqual(V.NOISE_RX, noise)
+        self.assertEqual(V.to_polar.__module__, "isac.model")
+
+    def test_radio_overrides_change_snr_and_restore(self):
+        quiet = self.SiteConfig(rsu_xy=self.rsu, boresight_rad=self.bore, nf_rx=V.P["nf_rx"] + 10)
+        tr = self.trk.report()
+        base = BeamFrontEnd(self.rsu, self.bore).dedicated(tr, [], RcsReport(-1.0), t=0.0)
+        noisy = BeamFrontEnd(site=quiet).dedicated(tr, [], RcsReport(-1.0), t=0.0)
+        self.assertAlmostEqual(base.pred_cell_snr_db - noisy.pred_cell_snr_db, 10.0, places=6)
+        iso = self.SiteConfig(rsu_xy=self.rsu, boresight_rad=self.bore, element_pattern=False)
+        d = BeamFrontEnd(site=iso).dedicated(tr, [], RcsReport(-1.0), t=0.0)
+        self.assertLess(d.pred_cell_snr_db, base.pred_cell_snr_db)  # loses 2 x e_max - pattern
+        self.assertGreater(float(np.asarray(V.elem_dbi(0.0, 90.0))), 0.0)
+
+    def test_cone_angle(self):
+        from isac.site import cone_to_polar
+
+        xy = np.array([[5.0, -40.0], [12.0, -20.0]])
+        u, r, th, _ = cone_to_polar(xy, self.rsu, self.bore, 6.0, 1.5)
+        us = V.to_polar(xy, self.rsu, self.bore, 6.0, 1.5)[0]
+        d2 = np.hypot(*(xy - self.rsu).T)
+        np.testing.assert_allclose(u, us * d2 / r)
+        # a horizontal ULA's phase follows the cone angle: beam(u_cone) reaches the peak gain
+        phase = np.exp(1j * np.pi * np.outer(u, V.N_IDX))
+        for k in range(2):
+            self.assertAlmostEqual(abs(phase[k] @ V.beam(u[k])) ** 2 / V.M, 1.0, places=12)
+            self.assertLess(abs(phase[k] @ V.beam(us[k])) ** 2 / V.M, 1.0)
+        site = self.SiteConfig(rsu_xy=self.rsu, boresight_rad=self.bore, cone_angle=True)
+        with site.active():
+            J = TR.polar_jacobian(xy[0], self.rsu, self.bore)
+            h = 1e-3
+            num = (TR.polar(xy[0] + [h, 0], self.rsu, self.bore)
+                   - TR.polar(xy[0] - [h, 0], self.rsu, self.bore)) / (2 * h)
+            np.testing.assert_allclose(J[:, 0], num, rtol=1e-5)
+        d = BeamFrontEnd(site=site).plan(self.trk.report(), self.grants, self.rcs)
+        self.assertGreaterEqual(d.pd_pred, 0.9)
+
+    def test_snr_calibration(self):
+        tr = self.trk.report()
+        off = self.SiteConfig(rsu_xy=self.rsu, boresight_rad=self.bore, snr_offset_db=6.0)
+        a = BeamFrontEnd(site=off).dedicated(tr, [], RcsReport(-1.0), t=0.0)
+        b = BeamFrontEnd(self.rsu, self.bore).dedicated(tr, [], RcsReport(-7.0), t=0.0)
+        self.assertAlmostEqual(a.pd_pred, b.pd_pred, places=12)
+        spread = self.SiteConfig(rsu_xy=self.rsu, boresight_rad=self.bore, snr_offset_db=6.0,
+                                 snr_sigma_db=4.0)
+        fe = BeamFrontEnd(site=spread)
+        sig, w = fe.rcs_nodes(self.rcs)
+        self.assertEqual(len(sig), 3 * spread.sigma_hermite_nodes)
+        self.assertAlmostEqual(w.sum(), 1.0)
+        self.assertAlmostEqual(w @ sig, 0.0 - 6.0, places=9)
+        self.assertAlmostEqual(math.sqrt(w @ (sig + 6.0) ** 2), math.sqrt(6.0 + 16.0), places=6)
+        # evidence for the RCS estimator stays in calibrated RCS units
+        tr0 = TrackReport(tr.track_id, tr.t, tr.x, np.zeros((4, 4)), tr.extent, tr.cls)
+        rep = SensingReport(0.0, True, rcs_detected=True, rcs_stat=20.0, rcs_floor_db=0.0)
+        u_off = BeamFrontEnd(site=off).rcs_look(a, rep, tr0).unit_db
+        u_ref = BeamFrontEnd(self.rsu, self.bore).rcs_look(a, rep, tr0).unit_db
+        np.testing.assert_allclose(u_off, u_ref - 6.0)
+
+    def test_quality_requirement_and_table(self):
+        from isac.interfaces import SensingRequirement
+
+        fe = BeamFrontEnd(self.rsu, self.bore)
+        tr = self.trk.report()
+        free = fe.plan(tr, self.grants, self.rcs, return_table=True)
+        tab = free.candidates
+        self.assertEqual(len(tab["pd"]), free.n_candidates)
+        self.assertTrue(np.isfinite(free.pred_cell_snr_db))
+        hi = float(np.nanmax(tab["pred_cell_snr_db"][tab["pd"] >= fe.tau]))
+        need = 0.5 * (free.pred_cell_snr_db + hi) if hi > free.pred_cell_snr_db + 1e-6 else hi
+        req = SensingRequirement(min_cell_snr_db=need)
+        d = fe.plan(tr, self.grants, self.rcs, requirement=req)
+        if d.mode == "reuse":
+            self.assertTrue(d.requirement_met)
+            self.assertGreaterEqual(d.pred_cell_snr_db, need - 1e-9)
+            self.assertGreaterEqual(d.cost_bits, free.cost_bits)
+            ok = (tab["pd"] >= fe.tau) & (tab["pred_cell_snr_db"] >= need)
+            self.assertAlmostEqual(d.cost_bits, float(tab["cost_bits"][ok].min()))
+        impossible = SensingRequirement(min_cell_snr_db=200.0)
+        d2 = fe.plan(TrackReport(tr.track_id, tr.t, tr.x, tr.P, tr.extent, tr.cls,
+                                 requirement=impossible), self.grants, self.rcs)
+        self.assertEqual(d2.mode, "dedicated")
+        self.assertFalse(d2.requirement_met)
+        cells = SensingRequirement(quality_snr_db=10.0, min_cells=1.5)
+        d3 = fe.plan(tr, self.grants, self.rcs, requirement=cells)
+        if d3.mode == "reuse":
+            self.assertGreaterEqual(d3.exp_quality_cells, 1.5)
+
+    def test_rsu_inside_box_falls_back_to_point(self):
+        fe = BeamFrontEnd(self.rsu, self.bore)
+        ghost = TrackReport(1, 0.4, np.array([*self.rsu, 0.0, 0.5]), np.eye(4) * 0.5,
+                            (4.73, 1.88), "car")
+        keys, xy, sig, dom, body = TG.box_scatterers(self.rsu, 0.3, 4.73, 1.88, self.rsu, 0.0)
+        self.assertIsNone(dom)
+        self.assertEqual(len(keys), 0)
+        pred = fe.prediction(ghost, 0.4)
+        self.assertTrue(pred["degenerate_box"])
+        self.assertNotIn("nodes", pred)
+        d = fe.dedicated(ghost, [], RcsReport(0.0), t=0.4)
+        self.assertTrue(d.info["degenerate_box"])
+        rep = SensingReport(0.4, True, rcs_detected=True, rcs_stat=30.0, rcs_floor_db=0.0)
+        self.assertTrue(np.all(np.isfinite(fe.rcs_look(d, rep, ghost).unit_db)))
+        self.assertTrue(np.isfinite(d.pd_pred) and np.isfinite(d.sigma_u))
+        trk = TR.CVTracker(0, 0.0, self.rsu, (0.0, 0.5), self.rsu, self.bore, (4.73, 1.88))
+        self.assertEqual(trk.scatterer_offsets()[0].shape, (1, 2))
+
+    def test_class_priors_and_arbitrary_road(self):
+        from isac.site import road_points, ue_link_site
+
+        pop = RcsPopulation.from_priors({"car": (-10.0, 3.0), "bus": (2.0, 3.0)}, omega=1.5)
+        est = RcsEstimator(pop, "car")
+        self.assertAlmostEqual(est.report().mean_dbsm, -10.0, delta=0.1)
+        self.assertAlmostEqual(RcsEstimator(pop, None).report().mean_dbsm, -4.0, delta=0.1)
+        xy, kind = road_points((20.0, 10.0), math.radians(35), [-3.5, 0.0, 6.0], (-50, 50), 10.0,
+                               ["vehicle", "vehicle", "sidewalk"])
+        self.assertEqual(len(xy), 33)
+        along = (xy - [20.0, 10.0]) @ [math.cos(math.radians(35)), math.sin(math.radians(35))]
+        self.assertAlmostEqual(along.min(), -50.0)
+        site = self.SiteConfig(rsu_xy=(0.0, 0.0), boresight_rad=math.radians(30), rsu_h=6.0,
+                               cone_angle=True)
+        with site.active():
+            rng = np.random.default_rng(1)
+            sinr, k0, u, r, th = ue_link_site(xy, kind, np.zeros(2), math.radians(30), rng)
+            sinr_i = ue_link_site(xy, kind, np.zeros(2), math.radians(30),
+                                  np.random.default_rng(1), interference_dbm=-60.0)[0]
+            G = V.gain(np.array([V.beam(g) for g in V.GRID]), u)
+            np.testing.assert_array_equal(k0, np.argmax(G, axis=0))
+        self.assertTrue(np.all(sinr_i < sinr))
+        self.assertTrue(np.all(np.isfinite(sinr)))
+
+
 if __name__ == "__main__":
     unittest.main()
