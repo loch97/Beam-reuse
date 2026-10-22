@@ -116,6 +116,8 @@ Settings are in `data/frontend_parameters.json`. Logs go to `outputs/closed_loop
 
 `python -m isac.simulate --target-model extended` runs the paper conditions with the multi-scatterer box in place of the point detector (`target.ExtendedDetector`), paired by seed block with the point model, and writes to `outputs/simulation_extended/`. The paper's effective RCS prior is kept: the dominant scatterer is lowered by the box's own contribution at the full-band reference cell (0–1.3 dB per frame), so the two models agree at that cell.
 
+Full paired batch: `python -m isac.simulate --target-model point --workers 4`, then the same with `--target-model extended`. Then run `python -m isac.summarize --target-model extended` (writes `resource_summary_extended.json` and `robustness_summary_extended.json`) and `python -m isac.compare_models [--dm 3] [--n 5]`. The comparison gives the extended-minus-point difference per condition and policy, with 95% intervals from the same paired seed-block resampling, and the robustness scores under `broad_U1`.
+
 `python -m isac.rt_extended [--paths outputs/rt/paths] [--fit-offsets]` compares the beam dependence of RT target power at the reference focus with both models, over steered, broadened and sector beams and 1/4/32 PRBs. RT paths are split into direct returns and transmit-side multipath (the transmit beam reaches the target over another reflector). The model contains only the direct returns. Vehicle extents come from the RT mesh bounding boxes. On the bundled example scene (car, t00_f0), within 20 dB of the RT peak:
 
 | Comparison | Box model | Point model |
