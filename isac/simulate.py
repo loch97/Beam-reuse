@@ -20,13 +20,29 @@ STRESS = ["s1", "s2", "b+2", "b-2"]
 CONDITIONS = ["broad_U1", "inter_U1", "narrow_U1", "broad_U0", "inter_U0", "narrow_U0"]
 
 
-def run(condition, seed, frames=None, skip_robustness=False):
+def run(condition, seed, frames=None, skip_robustness=False, target_model="point"):
+    """One condition and seed block. ``target_model="extended"`` replaces the point detector by
+    the multi-scatterer box (``target.ExtendedDetector``) in both the dedicated and the reuse
+    screens and writes to ``outputs/simulation_extended``; everything else, including the random
+    draws, is identical, so the two models are paired by seed block."""
     t0 = time.time()
     unc, ue = condition.split("_")
     assert unc in ["narrow", "inter", "broad"] and ue in ["U0", "U1"]
     V.config()
     V.gain = cached_gain
     V.predictive_pd = predictive_pd
+    screen, hook = compatibility_screen, None
+    if target_model == "extended":
+        from .target import ExtendedDetector
+
+        plain, screen = ExtendedDetector(), ExtendedDetector(threshold=0.9)
+        V.predictive_pd = plain
+
+        def hook(row, rsu, bore):
+            plain.set_frame(row, rsu, bore)
+            screen.set_frame(row, rsu, bore)
+    elif target_model != "point":
+        raise ValueError(target_model)
     V.P.update(
         deploy="corridor",
         pen_sd=5.0,
@@ -57,7 +73,8 @@ def run(condition, seed, frames=None, skip_robustness=False):
             eval_levels=LEVELS,
             ue_loss_fn=UELossCache(),
             extra=PointTruth() if robust else None,
-            predictive_screen_fn=compatibility_screen,
+            predictive_screen_fn=screen,
+            frame_hook=hook,
         )
         out = dict(
             condition=condition,
@@ -67,7 +84,8 @@ def run(condition, seed, frames=None, skip_robustness=False):
             dm=[0, 3, 16],
             N=list(range(1, 11)),
             metrics=expectations(A),
-            kernel_version=predictive_pd.resource_kernel_version,
+            kernel_version=(predictive_pd if target_model == "point" else screen).resource_kernel_version,
+            target_model=target_model,
             robustness=robust,
         )
         assert not (A["C"][:, :, 2] & ~A["C"][:, :, 11]).any()
@@ -77,7 +95,7 @@ def run(condition, seed, frames=None, skip_robustness=False):
             VR.STRESS = STRESS
             out["stress"] = VR.summarize(A, eval_levels=(2, 11, 13))
             out["cascade_S10_T"] = VR.cascade(A, 11, 13)
-        dest = OUT / "simulation"
+        dest = OUT / ("simulation" if target_model == "point" else "simulation_extended")
         dest.mkdir(parents=True, exist_ok=True)
         stem = f"{condition}_seed{seed}_f{out['frames']}"
         arrays = {k: A[k][:, :, LEVELS] for k in ["C", "DSE", "PDP", "LOSS", "TSEL"]}
@@ -103,8 +121,11 @@ def main():
     p.add_argument("--seeds", type=int, default=64)
     p.add_argument("--frames", type=int, default=12)
     p.add_argument("--workers", type=int, default=1)
+    p.add_argument("--target-model", choices=["point", "extended"], default="point")
+    p.add_argument("--skip-robustness", action="store_true")
     a = p.parse_args()
-    tasks = [(c, 2026100600 + i, a.frames, False) for c in a.condition for i in range(a.seeds)]
+    tasks = [(c, 2026100600 + i, a.frames, a.skip_robustness, a.target_model)
+             for c in a.condition for i in range(a.seeds)]
     with cf.ProcessPoolExecutor(max_workers=a.workers) as pool:
         for result in pool.map(run_task, tasks):
             print(result["condition"], result["seed"])
