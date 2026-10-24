@@ -163,6 +163,26 @@ Beams whose bound is below τ get P_D = −1 ("screened, below τ") without comp
 
 If the designated cell is read at the decision-time predicted dominant position (`BeamDecision.u_hat`, `r_hat`), construct `BeamFrontEnd(..., evidence_cell="predicted")`. The evidence curve and `rcs_look` then model a fixed cell, so the pose error moves the scatterers out of it. This matters at fine resolution: 0.8 m cells against pose errors of about 1 m. The default `"scatterer"` assumes the cell follows the dominant scatterer, as the closed-loop back end does.
 
+**Multi-grant looks (R5).** `BeamFrontEnd.plan_multi(track, grants, rcs, requirement=, max_grants=K, on_unmet=)` builds one look from up to K grants of the frame. Each selected grant illuminates the target with its own candidate beam on its own REs, and the look integrates them in one CPI.
+
+Model:
+- Cell SNRs add over grants: SNR = Σ_i SNR_i(W_i, n_re_i). This is energy addition, i.e. maximal-ratio combining over REs at the hypothesised cell, with the transmit beam response known per RE.
+- UE leakage is added per grant, averaged over that grant's UE-direction quadrature (an approximation; single-grant `plan` averages P_D over it exactly).
+- P_D (any cell, pose- and RCS-averaged) and the quality terms use the combined values. Cost = Σ_i n_re_i·ΔSE_i, each grant within its own MCS budget.
+- All grants share one pose prediction (at `t`, default the first grant's time).
+- Range coupling uses `sensing_bandwidth_hz`; set it for multi-grant looks. The default, the summed grant bandwidths, is only a placeholder.
+
+Search:
+- If the single-grant `plan` already meets P_D ≥ τ and the requirement, that decision is returned, with `parts` of length 1 and `info["multi"] = False`. `max_grants=1` therefore equals `plan`.
+- Otherwise grants are added greedily. A choice that makes the set feasible wins at the least total cost; otherwise the candidate with the largest strongest-cell SNR gain per (cost + 1 bit) is added. A final pass drops grants whose removal keeps the set feasible.
+- If no set is feasible, `on_unmet` decides: `"dedicated"`, `"reuse_pd"` (single-grant), or `"best_quality"` (the greedy set, flagged unmet).
+
+Result: `mode="reuse_multi"`, `parts` = [{grant, ue_id, tag, weights, n_re, bandwidth, loss_db, mcs, dse, cost_bits}], with combined `pd_pred`, `pred_cell_snr_db`, `exp_quality_cells`, `requirement_met`, summed `cost_bits` and `n_re`, and `weights = grant = None`. `rcs_look` sums the parts' unit SNRs. The closed-loop simulator does not execute multi-grant looks.
+
+Two limits seen in testing:
+- Adding a grant also adds its UE's leakage. One grant lowered the combined strongest-cell SNR from 48.4 to 42.3 dB, so grants must be chosen, not just added.
+- Under pointing uncertainty P_D saturates. Pose hypotheses outside every beam's main lobe are not fixed by more energy (best pair P_D 0.897 when no single grant reached 0.9). Multi-grant mainly raises measurement quality (SNR), not P_D.
+
 ### Extended target in the paper pipeline and RT check
 
 `python -m isac.simulate --target-model extended` runs the paper conditions with the multi-scatterer box in place of the point detector (`target.ExtendedDetector`), paired by seed block with the point model, and writes to `outputs/simulation_extended/`. The paper's effective RCS prior is kept: the dominant scatterer is lowered by the box's own contribution at the full-band reference cell (0–1.3 dB per frame), so the two models agree at that cell.

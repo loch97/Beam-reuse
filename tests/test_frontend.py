@@ -8,7 +8,7 @@ from isac import model as V, simulation_engine as LS, closed_loop as CL
 from isac import target as TG, tracker as TR
 from isac.detection import predictive_pd
 from isac.frontend import BeamFrontEnd, curve_sigma
-from isac.interfaces import GrantReport, SensingReport, RcsReport, TrackReport
+from isac.interfaces import GrantReport, SensingReport, RcsReport, TrackReport, BeamDecision
 from isac.rcs import RcsPopulation, RcsEstimator, RcsLook
 
 ROOT = TG.ROOT
@@ -707,6 +707,81 @@ class RoundTwoTests(unittest.TestCase):
         ds = fs.dedicated(tr, [], RcsReport(0.0), t=0.0)
         self.assertTrue(np.all(dp.pd_curve <= ds.pd_curve + 1e-9))  # fixed cell loses SNR
         self.assertTrue(np.all(np.diff(dp.pd_curve) >= -1e-12))
+
+
+
+class MultiGrantTests(unittest.TestCase):
+    """R5: one sensing look integrated over several grants of a frame."""
+
+    @classmethod
+    def setUpClass(cls):
+        from isac.site import SiteConfig
+
+        CL.configure()
+        cls.meta, cls.rsu, cls.bore = LS.geometry()
+        rng = np.random.default_rng(5)
+        cls.grants = CL.Scheduler(cls.rsu, cls.bore, rng, n_grants=4).grants(0.4)
+        cls.trk = TR.CVTracker(0, 0.0, (5.25, -62.0), (0.0, 8.0), cls.rsu, cls.bore,
+                               (4.73, 1.88), P0=np.diag([0.3, 0.3, 0.2, 0.2]))
+        cls.rcs = RcsReport(-1.0, 0.5, 0, "x", np.array([-3.0, 0.0, 3.0]), np.ones(3) / 3)
+        cls.site = SiteConfig(rsu_xy=cls.rsu, boresight_rad=cls.bore, sensing_bandwidth_hz=46.08e6)
+
+    def test_single_grant_cases_equal_plan(self):
+        from isac.interfaces import SensingRequirement
+
+        fe = BeamFrontEnd(site=self.site, on_unmet="reuse_pd")
+        tr = self.trk.report()
+        p = fe.plan(tr, self.grants, self.rcs)
+        m = fe.plan_multi(tr, self.grants, self.rcs, max_grants=4)
+        self.assertEqual((m.mode, m.grant, m.tag), (p.mode, p.grant, p.tag))
+        self.assertEqual(len(m.parts), 1)
+        self.assertFalse(m.info["multi"])
+        req = SensingRequirement(min_cell_snr_db=200.0)
+        one = fe.plan_multi(tr, self.grants, self.rcs, requirement=req, max_grants=1)
+        ref = fe.plan(tr, self.grants, self.rcs, requirement=req)
+        self.assertEqual((one.mode, one.grant, one.tag, one.info["fallback"]),
+                         (ref.mode, ref.grant, ref.tag, "reuse_pd"))
+        ded = fe.plan_multi(tr, self.grants, self.rcs, requirement=req, max_grants=4,
+                            on_unmet="dedicated")
+        self.assertEqual((ded.mode, ded.requirement_met), ("dedicated", False))
+
+    def test_combined_grants_meet_requirement(self):
+        from isac.interfaces import SensingRequirement
+
+        fe = BeamFrontEnd(site=self.site, on_unmet="reuse_pd")
+        tr = self.trk.report()
+        tab = fe.plan(tr, self.grants, self.rcs, return_table=True).candidates
+        best = float(np.nanmax(tab["pred_cell_snr_db"][np.round(tab["pd"], 12) >= fe.tau]))
+        need = best + 0.05
+        d = fe.plan_multi(tr, self.grants, self.rcs,
+                          requirement=SensingRequirement(min_cell_snr_db=need), max_grants=4)
+        self.assertEqual(d.mode, "reuse_multi")
+        self.assertTrue(d.requirement_met)
+        self.assertEqual(d.info["fallback"], "none")
+        self.assertGreaterEqual(d.pred_cell_snr_db, need)
+        self.assertGreaterEqual(d.pd_pred, fe.tau)
+        grants = [p["grant"] for p in d.parts]
+        self.assertGreaterEqual(len(grants), 2)
+        self.assertLessEqual(len(grants), 4)
+        self.assertEqual(len(set(grants)), len(grants))
+        self.assertIsNone(d.weights)
+        self.assertAlmostEqual(d.cost_bits, sum(p["cost_bits"] for p in d.parts))
+        self.assertEqual(d.n_re, sum(p["n_re"] for p in d.parts))
+        self.assertEqual(d.resolution_bw, 46.08e6)
+        for prt in d.parts:
+            g = self.grants[prt["grant"]]
+            self.assertGreaterEqual(prt["mcs"], max(g.mcs - g.max_mcs_drop, V.P["mcs_floor"]))
+            self.assertEqual(prt["n_re"], g.n_prb * 12 * g.n_sym)
+        # RCS evidence of a multi-grant look sums the parts' unit SNRs
+        rep = SensingReport(0.4, True, rcs_detected=True, rcs_stat=50.0, rcs_floor_db=0.0)
+        exact = TrackReport(tr.track_id, tr.t, tr.x, np.zeros((4, 4)), tr.extent, tr.cls)
+        lm = fe.rcs_look(d, rep, exact)
+        for prt in d.parts:
+            dp = BeamDecision("reuse", d.t, weights=prt["weights"], n_re=prt["n_re"],
+                              bandwidth=prt["bandwidth"], resolution_bw=d.resolution_bw,
+                              pd_curve_sigma=d.pd_curve_sigma, pd_curve=d.pd_curve)
+            self.assertGreater(lm.unit_db.max(), fe.rcs_look(dp, rep, exact).unit_db.max())
+        self.assertTrue(np.all(np.diff(d.pd_curve) >= -1e-12))
 
 
 if __name__ == "__main__":

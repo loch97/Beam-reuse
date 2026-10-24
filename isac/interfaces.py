@@ -119,7 +119,7 @@ class GrantReport:
 class BeamDecision:
     """Front-end output for one sensing opportunity."""
 
-    mode: str  # "reuse", "dedicated" or "skip"
+    mode: str  # "reuse", "reuse_multi", "dedicated" or "skip"
     t: float
     grant: Optional[int] = None
     ue_id: Optional[int] = None
@@ -148,6 +148,7 @@ class BeamDecision:
     candidates: Optional[dict] = None
     resolution_bw: float = float("nan")
     quality_prob: float = float("nan")
+    parts: Optional[list] = None
 
 
 @dataclass

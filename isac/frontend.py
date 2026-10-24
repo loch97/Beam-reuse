@@ -551,6 +551,217 @@ class BeamFrontEnd:
             **self._pred_fields(pred),
         )
 
+    # -- multi-grant looks ----------------------------------------------------------------------
+    def _part(self, g, i, e, c):
+        return dict(grant=i, ue_id=g.ue_id, tag=int(e["tag"][c]), weights=e["W"][c],
+                    n_re=int(e["n_re"]), bandwidth=float(e["grant_bw"]),
+                    loss_db=float(e["loss"][c]), mcs=e["mcs"][c][0], dse=float(e["dse"][c]),
+                    cost_bits=float(e["n_re"] * e["dse"][c]))
+
+    def _mean_leak(self, W, nodes, n_re, bw, clutter):
+        """UE leakage averaged over the clutter quadrature, per beam, node and cell."""
+        if clutter is None:
+            return np.zeros((len(W),) + nodes.u.shape)
+        cu, cr, cs, ct = clutter[:4]
+        cu = np.atleast_1d(cu)
+        cw = np.asarray(clutter[4]) if len(clutter) > 4 else np.ones(len(cu)) / len(cu)
+        cp = 10 ** (V.rc_snr_db(array_gain(W, cu), cu, cr, cs, ct, n_re) / 10)
+        resp = V.rx_rel(nodes.u[None] - cu[:, None, None]) * delay_power(nodes.r - cr, bw)
+        return np.einsum("bq,q,qnk->bnk", cp, cw, resp)
+
+    def _combined(self, rho, leak, nodes, sigma, weights, s_q):
+        """P_D, strongest-cell SNR (dB) and cell count for summed cell SNRs: rho, leak (B, N, K)."""
+        lp = math.log(V.P["pfa"])
+        sinr = rho / (1 + leak)
+        snr = 10 * np.log10(np.maximum(sinr, 1e-30)).max(axis=2) @ nodes.w + float(weights @ sigma)
+        pd = np.zeros(len(rho))
+        cells = np.zeros(len(rho)) if s_q is not None else np.full(len(rho), np.nan)
+        for x, w in zip(10 ** (sigma / 10), weights):
+            pd += w * (np.exp(lp * (1 + leak) / (1 + leak + x * rho)).max(axis=2) @ nodes.w)
+            if s_q is not None:
+                cells += w * ((10 * np.log10(np.maximum(x * sinr, 1e-30)) >= s_q).sum(axis=2)
+                              @ nodes.w)
+        return pd, snr, cells
+
+    @_in_site
+    def plan_multi(self, track, grants, rcs=None, t=None, requirement=None, max_grants=3,
+                   on_unmet=None, cost_eps_bits=1.0):
+        """One sensing look over up to ``max_grants`` grants of the frame (multi-grant).
+
+        Each selected grant illuminates the target with its own candidate beam on its own REs,
+        and the look integrates all of them in one CPI. Cell SNRs add over grants (energy
+        addition, i.e. maximal-ratio combining over REs at the hypothesised cell):
+        SNR_cell = sum_i SNR_i(W_i, n_re_i). UE leakage is added per grant, averaged over each
+        grant's UE-direction quadrature. P_D (any cell, pose- and RCS-averaged) and the quality
+        terms use the combined values; the cost is sum_i n_re_i * dSE_i, each grant within its
+        own MCS budget.
+
+        Selection: if the single-grant ``plan`` already meets P_D >= tau and the requirement, its
+        decision is returned (so ``max_grants=1`` is ``plan``). Otherwise grants are added
+        greedily: a choice that makes the set feasible wins at the least total cost; else the
+        candidate with the largest strongest-cell SNR gain per (cost + ``cost_eps_bits``). A
+        final pass drops grants whose removal keeps the set feasible, most expensive first.
+        If no set within ``max_grants`` is feasible, ``on_unmet`` decides: "dedicated" (dedicated
+        beam), "reuse_pd" (single-grant cheapest P_D-feasible reuse), "best_quality" (the
+        greedy set, flagged unmet).
+
+        All grants share one pose prediction at ``t`` (default: the first grant's time). The
+        range-cell coupling uses ``SiteConfig.sensing_bandwidth_hz`` when set, else the summed
+        grant bandwidths. Returns a BeamDecision with ``mode="reuse_multi"`` and ``parts``
+        (grant, ue_id, tag, weights, n_re, bandwidth, loss_db, mcs, dse, cost_bits); ``weights``
+        and ``grant`` are None for a multi-grant look. A one-grant result has ``mode="reuse"``.
+        """
+        on_unmet = self.on_unmet if on_unmet is None else on_unmet
+        rcs = self.default_rcs() if rcs is None else rcs
+        req = requirement if requirement is not None else getattr(track, "requirement", None)
+        req = req if req is not None and req.active() else None
+        single = self.plan(track, grants, rcs, t, requirement=req, on_unmet="dedicated")
+        met = single.mode == "reuse" and (req is None or single.requirement_met)
+        if met or max_grants <= 1 or len(grants) <= 1:
+            d = single if met else self.plan(track, grants, rcs, t, requirement=req,
+                                             on_unmet=on_unmet)
+            d.info["multi"] = False
+            if d.mode == "reuse":
+                d.parts = [self._single_part(d)]
+            return d
+        s_q = req.quality_snr_db if req is not None else None
+        sigma, weights = self.rcs_nodes(rcs)
+        t0 = grants[0].t if t is None else t
+        pred = self.prediction(track, t0)
+        nodes = pred["nodes"] if "nodes" in pred else self._evidence_nodes(pred)
+        res = self.site.sensing_bandwidth_hz if self.site is not None else None
+        bw = res if res is not None else float(sum(g.n_prb * 12 * V.P["df"] for g in grants))
+        pool = []
+        stage_tags = sorted(set().union(*self.stages))
+        for i, g in enumerate(grants):
+            e = self.evaluate_grant(g, pred)
+            cs = np.flatnonzero(e["ok"] & np.isin(e["tag"], stage_tags))
+            if not cs.size:
+                continue
+            W = e["W"][cs]
+            pool.append(dict(i=i, g=g, e=e, cs=cs, cost=e["n_re"] * e["dse"][cs],
+                             rho=cell_snr(W, nodes, e["n_re"], bw),
+                             leak=self._mean_leak(W, nodes, e["n_re"], bw, e["clutter"])))
+        rho = np.zeros(nodes.u.shape)
+        leak = np.zeros(nodes.u.shape)
+        chosen, cur_snr, feasible = [], -np.inf, False
+
+        def ok(pd, snr, cells):
+            return np.array([round(float(p), PD_DECIMALS) >= self.tau and self.meets(req, s, c)
+                             for p, s, c in zip(pd, snr, cells)])
+
+        while len(chosen) < max_grants:
+            used = {k for k, _ in chosen}
+            best_feas, best_gain = None, None
+            for k, P in enumerate(pool):
+                if k in used:
+                    continue
+                pd, snr, cells = self._combined(rho[None] + P["rho"], leak[None] + P["leak"],
+                                                nodes, sigma, weights, s_q)
+                total = sum(pool[a]["cost"][b] for a, b in chosen) + P["cost"]
+                f = ok(pd, snr, cells)
+                for j in np.flatnonzero(f):
+                    key = (total[j], -snr[j], k, j)
+                    if best_feas is None or key < best_feas[0]:
+                        best_feas = (key, k, j)
+                ratio = (snr - cur_snr if np.isfinite(cur_snr) else snr) / (P["cost"] + cost_eps_bits)
+                j = int(np.argmax(ratio))
+                if (snr[j] > cur_snr) and (best_gain is None or ratio[j] > best_gain[0]):
+                    best_gain = (ratio[j], k, j)
+            pick = best_feas if best_feas is not None else best_gain
+            if pick is None:
+                break
+            _, k, j = pick
+            chosen.append((k, j))
+            rho, leak = rho + pool[k]["rho"][j], leak + pool[k]["leak"][j]
+            cur_snr = self._combined(rho[None], leak[None], nodes, sigma, weights, s_q)[1][0]
+            if best_feas is not None:
+                feasible = True
+                break
+        if feasible and len(chosen) > 1:
+            for k, j in sorted(chosen, key=lambda kj: -pool[kj[0]]["cost"][kj[1]]):
+                rest = [(a, b) for a, b in chosen if (a, b) != (k, j)]
+                r_ = sum(pool[a]["rho"][b] for a, b in rest)
+                l_ = sum(pool[a]["leak"][b] for a, b in rest)
+                if ok(*self._combined(r_[None], l_[None], nodes, sigma, weights, s_q))[0]:
+                    chosen = rest
+        if not chosen or (not feasible and on_unmet != "best_quality"):
+            d = self.plan(track, grants, rcs, t, requirement=req, on_unmet=on_unmet)
+            d.info["multi"] = False
+            if d.mode == "reuse":
+                d.parts = [self._single_part(d)]
+            return d
+        rho = sum(pool[a]["rho"][b] for a, b in chosen)
+        leak = sum(pool[a]["leak"][b] for a, b in chosen)
+        pd, snr, cells = (v[0] for v in self._combined(rho[None], leak[None], nodes, sigma,
+                                                         weights, s_q))
+        parts = [self._part(pool[a]["g"], pool[a]["i"], pool[a]["e"], pool[a]["cs"][b])
+                 for a, b in chosen]
+        grid = curve_sigma()
+        curve = self._multi_curve(parts, pool, chosen, nodes, bw, pred, grid)
+        multi = len(parts) > 1
+        return BeamDecision(
+            "reuse_multi" if multi else "reuse",
+            t0,
+            grant=None if multi else parts[0]["grant"],
+            ue_id=None if multi else parts[0]["ue_id"],
+            weights=None if multi else parts[0]["weights"],
+            tag=None if multi else parts[0]["tag"],
+            pd_pred=float(pd),
+            pd_curve_sigma=grid,
+            pd_curve=curve,
+            ue_loss_db=max(p["loss_db"] for p in parts),
+            mcs=None if multi else parts[0]["mcs"],
+            dse=float(sum(p["dse"] for p in parts)),
+            cost_bits=float(sum(p["cost_bits"] for p in parts)),
+            n_re=int(sum(p["n_re"] for p in parts)),
+            bandwidth=float(sum(p["bandwidth"] for p in parts)),
+            rcs_design_dbsm=rcs.design_dbsm,
+            rcs_mean_dbsm=float(weights @ sigma),
+            n_candidates=int(sum(len(P["cs"]) for P in pool)),
+            info=dict(multi=True, fallback="none" if feasible else "best_quality",
+                      rcs_source=rcs.source, rcs_nodes=sigma.tolist(),
+                      rcs_weights=weights.tolist(), degenerate_box=pred["degenerate_box"],
+                      leakage="mean over UE quadrature per grant"),
+            pred_cell_snr_db=float(snr),
+            exp_quality_cells=float(cells),
+            requirement_met=None if req is None else bool(feasible),
+            resolution_bw=float(bw),
+            quality_prob=float(req.quality_prob(snr)) if req is not None else float("nan"),
+            parts=parts,
+            **self._pred_fields(pred),
+        )
+
+    @staticmethod
+    def _single_part(d):
+        return dict(grant=d.grant, ue_id=d.ue_id, tag=d.tag, weights=d.weights, n_re=d.n_re,
+                    bandwidth=d.bandwidth, loss_db=d.ue_loss_db, mcs=d.mcs, dse=d.dse,
+                    cost_bits=d.cost_bits)
+
+    def _multi_curve(self, parts, pool, chosen, nodes, bw, pred, grid):
+        """Designated-cell crossing curve of a multi-grant look (summed cell SNR and leakage)."""
+        lp = math.log(V.P["pfa"])
+        model = grid - self.snr_offset()
+        if self.evidence_cell == "predicted":
+            rho = sum(focus_snr(pool[a]["e"]["W"][[pool[a]["cs"][b]]], nodes, pool[a]["e"]["n_re"],
+                                bw, pred["u_hat"], pred["r_hat"])[0] for a, b in chosen)
+            leak = 0.0
+            for a, b in chosen:
+                cl = pool[a]["e"]["clutter"]
+                if cl is not None:
+                    W = pool[a]["e"]["W"][[pool[a]["cs"][b]]]
+                    cu = np.atleast_1d(cl[0])
+                    cw = np.asarray(cl[4]) if len(cl) > 4 else np.ones(len(cu)) / len(cu)
+                    cp = 10 ** (V.rc_snr_db(array_gain(W, cu), cu, cl[1], cl[2], cl[3],
+                                            pool[a]["e"]["n_re"]) / 10)[0]
+                    leak += float(cw @ (cp * V.rx_rel(pred["u_hat"] - cu)
+                                        * delay_power(pred["r_hat"] - cl[1], bw)))
+        else:
+            rho = sum(pool[a]["rho"][b][:, nodes.dom] for a, b in chosen)
+            leak = sum(pool[a]["leak"][b][:, nodes.dom] for a, b in chosen)
+        x = 10 ** (model / 10)
+        return np.exp(lp * (1 + leak) / (1 + leak + x[:, None] * rho[None, :])) @ nodes.w
+
     @staticmethod
     def _table(rows, pairs):
         """Admissible candidates as arrays (grant, ue_id, tag, loss_db, mcs, dse, cost_bits, pd,
@@ -645,10 +856,12 @@ class BeamFrontEnd:
                                      V.P["rc_h"])
             J = polar_jacobian(track.x[:2], self.rsu, self.bore)[0]
             nodes = self.point_nodes(u[0], r[0], th[0], math.sqrt(float(J @ track.P[:2, :2] @ J)))
+        looks = ([(p["weights"], p["n_re"]) for p in d.parts] if d.parts and d.weights is None
+                 else [(d.weights, d.n_re)])
         if self.evidence_cell == "predicted":
-            unit = focus_snr(d.weights[None], nodes, d.n_re, bw, d.u_hat, d.r_hat)[0]
+            unit = sum(focus_snr(W[None], nodes, n, bw, d.u_hat, d.r_hat)[0] for W, n in looks)
         else:
-            unit = cell_snr(d.weights[None], nodes, d.n_re, bw)[0, :, nodes.dom]
+            unit = sum(cell_snr(W[None], nodes, n, bw)[0, :, nodes.dom] for W, n in looks)
         w = nodes.w
         keep = w > 1e-9 * w.max()
         look.eta = float(-math.log(V.P["pfa"]))
