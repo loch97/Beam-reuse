@@ -25,16 +25,30 @@ class SensingRequirement:
     cell, averaged in dB over pose and RCS uncertainty, must reach this value.
     ``min_cells`` with ``quality_snr_db``: the expected number of scatterer cells whose SNR reaches
     ``quality_snr_db`` must be at least ``min_cells``.
+    ``quality_logistic`` = (a, b) with ``min_quality_prob``: an externally fitted calibration
+    P(quality | pred_cell_snr_db) = 1 / (1 + exp(-(a + b * pred_cell_snr_db))) must reach
+    ``min_quality_prob``. ``pred_cell_snr_db`` is the front end's (calibrated) value.
     Fields left at None impose nothing.
     """
 
     min_cell_snr_db: Optional[float] = None
     quality_snr_db: Optional[float] = None
     min_cells: Optional[float] = None
+    quality_logistic: Optional[tuple] = None
+    min_quality_prob: Optional[float] = None
 
     def active(self):
         return self.min_cell_snr_db is not None or (
-            self.min_cells is not None and self.quality_snr_db is not None)
+            self.min_cells is not None and self.quality_snr_db is not None) or (
+            self.quality_logistic is not None and self.min_quality_prob is not None)
+
+    def quality_prob(self, pred_cell_snr_db):
+        """P(back end measures well | predicted strongest-cell SNR) from the external logistic
+        calibration ``quality_logistic`` = (a, b): 1 / (1 + exp(-(a + b * snr_db))); NaN if unset."""
+        if self.quality_logistic is None:
+            return np.full(np.shape(pred_cell_snr_db), np.nan)
+        a, b = self.quality_logistic
+        return 1.0 / (1.0 + np.exp(-(a + b * np.asarray(pred_cell_snr_db, float))))
 
 
 @dataclass
@@ -132,6 +146,8 @@ class BeamDecision:
     exp_quality_cells: float = float("nan")
     requirement_met: Optional[bool] = None
     candidates: Optional[dict] = None
+    resolution_bw: float = float("nan")
+    quality_prob: float = float("nan")
 
 
 @dataclass

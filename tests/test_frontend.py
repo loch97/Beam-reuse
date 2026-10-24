@@ -580,5 +580,134 @@ class SiteInterfaceTests(unittest.TestCase):
         self.assertTrue(np.all(np.isfinite(sinr)))
 
 
+
+class RoundTwoTests(unittest.TestCase):
+    """Resolution bandwidth, quality calibration, fallbacks, screening and fixed-cell evidence."""
+
+    @classmethod
+    def setUpClass(cls):
+        from isac.site import SiteConfig
+
+        CL.configure()
+        cls.SiteConfig = SiteConfig
+        cls.meta, cls.rsu, cls.bore = LS.geometry()
+        rng = np.random.default_rng(5)
+        cls.grants = CL.Scheduler(cls.rsu, cls.bore, rng, n_grants=4).grants(0.4)
+        cls.trk = TR.CVTracker(0, 0.0, (5.25, -62.0), (0.0, 8.0), cls.rsu, cls.bore,
+                               (4.73, 1.88), P0=np.diag([0.3, 0.3, 0.2, 0.2]))
+        cls.rcs = RcsReport(-1.0, 0.5, 0, "x", np.array([-3.0, 0.0, 3.0]), np.ones(3) / 3)
+
+    def test_resolution_bandwidth_decoupled_from_res(self):
+        tr = self.trk.report()
+        base = BeamFrontEnd(self.rsu, self.bore).plan(tr, self.grants, self.rcs)
+        self.assertEqual(base.resolution_bw, base.bandwidth)
+        wide = self.SiteConfig(rsu_xy=self.rsu, boresight_rad=self.bore,
+                               sensing_bandwidth_hz=190.08e6)
+        fe = BeamFrontEnd(site=wide)
+        d = fe.plan(tr, self.grants, self.rcs)
+        self.assertEqual(d.resolution_bw, 190.08e6)
+        self.assertEqual(d.bandwidth, self.grants[d.grant].n_prb * 12 * V.P["df"])
+        self.assertEqual(d.n_re, self.grants[d.grant].n_prb * 12 * self.grants[d.grant].n_sym)
+        # same beam, same REs: resolving the scatterers in range lowers the strongest cell
+        g = self.grants[base.grant]
+        pred = fe.prediction(tr, g.t)
+        e = fe.evaluate_grant(g, pred)
+        self.assertEqual(e["bw"], 190.08e6)
+        narrow = BeamFrontEnd(self.rsu, self.bore)
+        snr_w = fe.quality(base.weights, pred, e["n_re"], 190.08e6, None, np.zeros(1), np.ones(1))[0]
+        snr_n = narrow.quality(base.weights, pred, e["n_re"], e["grant_bw"], None, np.zeros(1),
+                               np.ones(1))[0]
+        self.assertLess(snr_w[0], snr_n[0])
+        ded = fe.dedicated(tr, [], RcsReport(-1.0), t=0.0)
+        self.assertEqual(ded.resolution_bw, 190.08e6)
+
+    def test_logistic_quality_requirement(self):
+        from isac.interfaces import SensingRequirement
+
+        req = SensingRequirement(quality_logistic=(-8.0, 0.25), min_quality_prob=0.5)
+        self.assertTrue(req.active())
+        self.assertAlmostEqual(float(req.quality_prob(32.0)), 0.5)
+        fe = BeamFrontEnd(self.rsu, self.bore, on_unmet="reuse_pd")
+        d = fe.plan(self.trk.report(), self.grants, self.rcs, requirement=req)
+        self.assertAlmostEqual(d.quality_prob, float(req.quality_prob(d.pred_cell_snr_db)))
+        if d.requirement_met:
+            self.assertGreaterEqual(d.quality_prob, 0.5)
+
+    def test_on_unmet_fallbacks(self):
+        from isac.interfaces import SensingRequirement
+
+        tr = self.trk.report()
+        impossible = SensingRequirement(min_cell_snr_db=200.0)
+        fe = BeamFrontEnd(self.rsu, self.bore)
+        free = fe.plan(tr, self.grants, self.rcs, return_table=True)
+        d0 = fe.plan(tr, self.grants, self.rcs, requirement=impossible)
+        self.assertEqual((d0.mode, d0.info["fallback"], d0.requirement_met),
+                         ("dedicated", "dedicated", False))
+        d1 = fe.plan(tr, self.grants, self.rcs, requirement=impossible, on_unmet="reuse_pd")
+        self.assertEqual((d1.mode, d1.grant, d1.tag), (free.mode, free.grant, free.tag))
+        self.assertEqual((d1.info["fallback"], d1.requirement_met), ("reuse_pd", False))
+        d2 = fe.plan(tr, self.grants, self.rcs, requirement=impossible, on_unmet="best_quality")
+        self.assertEqual((d2.mode, d2.info["fallback"], d2.requirement_met),
+                         ("reuse", "best_quality", False))
+        tab = free.candidates
+        ok = np.round(tab["pd"], 12) >= fe.tau
+        self.assertAlmostEqual(d2.pred_cell_snr_db, float(tab["pred_cell_snr_db"][ok].max()),
+                               places=9)
+        self.assertGreaterEqual(d2.pd_pred, fe.tau)
+        self.assertEqual(free.info["fallback"], "none")
+
+    def test_upper_bound_screen_is_safe(self):
+        fe = BeamFrontEnd(self.rsu, self.bore)
+        tr = self.trk.report()
+        weak = RcsReport(-14.0, -13.0, 0, "x", np.array([-17.0, -13.0, -9.0]), np.ones(3) / 3)
+        d = fe.plan(tr, self.grants, weak, return_table=True)
+        tab = d.candidates
+        screened = tab["pd"] < 0
+        self.assertTrue(screened.any())
+        for i, g in enumerate(self.grants):
+            sel = screened & (tab["grant"] == i)
+            if not sel.any():
+                continue
+            pred = fe.prediction(tr, g.t)
+            e = fe.evaluate_grant(g, pred)
+            sig, w = fe.rcs_nodes(weak)
+            exact = fe.detect(tab["weights"][sel], pred, e["n_re"], e["bw"], e["clutter"], sig, w)
+            self.assertTrue(np.all(exact < fe.tau))
+            bound = TG.pd_upper_bound(tab["weights"][sel], pred["nodes"], e["n_re"], sig, w)
+            clean = w @ TG.extended_pd_shifts(tab["weights"][sel], pred["nodes"], e["n_re"],
+                                              e["bw"], None, shifts_db=sig)[0]
+            self.assertTrue(np.all(bound >= clean - 1e-12))
+        # the bound must actually bite for a weak target (not a vacuous 1.0)
+        g = self.grants[0]
+        pred = fe.prediction(tr, g.t)
+        e = fe.evaluate_grant(g, pred)
+        W = e["W"][e["ok"]]
+        bound = TG.pd_upper_bound(W, pred["nodes"], e["n_re"], np.array([-38.0]), np.ones(1))
+        self.assertGreater(np.mean(bound < fe.tau), 0.5)
+
+    def test_predicted_evidence_cell(self):
+        wide = self.SiteConfig(rsu_xy=self.rsu, boresight_rad=self.bore,
+                               sensing_bandwidth_hz=190.08e6)
+        fs = BeamFrontEnd(site=wide)
+        fp = BeamFrontEnd(site=wide, evidence_cell="predicted")
+        tr = self.trk.report()
+        exact = TrackReport(tr.track_id, tr.t, tr.x, np.zeros((4, 4)), tr.extent, tr.cls)
+        d = fp.dedicated(exact, [], RcsReport(0.0), t=0.0)
+        rep = SensingReport(0.0, True, rcs_detected=True, rcs_stat=50.0, rcs_floor_db=0.0)
+        np.testing.assert_allclose(fp.rcs_look(d, rep, exact).unit_db,
+                                   fs.rcs_look(d, rep, exact).unit_db, atol=1e-9)
+        moved = TrackReport(tr.track_id, tr.t, tr.x + np.array([0.0, 1.0, 0, 0]),
+                            np.diag([0.05, 0.05, 0.1, 0.1]), tr.extent, tr.cls)
+        def mean_unit(look):
+            return 10 * math.log10(look.unit_w @ 10 ** (look.unit_db / 10))
+
+        self.assertLess(mean_unit(fp.rcs_look(d, rep, moved)),
+                        mean_unit(fs.rcs_look(d, rep, moved)) - 1.0)
+        dp = fp.dedicated(tr, [], RcsReport(0.0), t=0.0)
+        ds = fs.dedicated(tr, [], RcsReport(0.0), t=0.0)
+        self.assertTrue(np.all(dp.pd_curve <= ds.pd_curve + 1e-9))  # fixed cell loses SNR
+        self.assertTrue(np.all(np.diff(dp.pd_curve) >= -1e-12))
+
+
 if __name__ == "__main__":
     unittest.main()

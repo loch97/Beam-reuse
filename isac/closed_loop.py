@@ -93,7 +93,8 @@ class SensingBackend:
         W = d.weights[None]
         rho = 10 ** (V.rc_snr_db(array_gain(W, u)[0], u, r, sig, th, d.n_re) / 10)
         amp = np.sqrt(rho / 2) * (self.rng.normal(size=len(u)) + 1j * self.rng.normal(size=len(u)))
-        coup = rx_amp(u[:, None] - u[None, :]) * delay_amplitude(r[:, None] - r[None, :], d.bandwidth)
+        bw = d.resolution_bw if np.isfinite(d.resolution_bw) else d.bandwidth
+        coup = rx_amp(u[:, None] - u[None, :]) * delay_amplitude(r[:, None] - r[None, :], bw)
         k = len(u)
         # Matched-filter noise is correlated between cells exactly as the signal coupling (unit
         # diagonal); the UE is one coherent point reflector seen through the same responses.
@@ -105,7 +106,7 @@ class SensingBackend:
             cs = self.ue_rcs if grant.ue_kind == "vehicle" else V.P["sigma_ped_dbsm"]
             cu, cr, ct = sched.u[j], sched.r_rc[j], sched.th_rc[j]
             cp = 10 ** (V.rc_snr_db(array_gain(W, [cu])[0, 0], cu, cr, cs, ct, d.n_re) / 10)
-            g = rx_amp(u - cu) * delay_amplitude(r - cr, d.bandwidth)
+            g = rx_amp(u - cu) * delay_amplitude(r - cr, bw)
             noise = noise + math.sqrt(cp / 2) * (self.rng.normal() + 1j * self.rng.normal()) * g
             leak = cp * g**2
         stat = np.abs(coup @ amp + noise) ** 2 / (1 + leak)
@@ -118,7 +119,7 @@ class SensingBackend:
             return SensingReport(d.t, False, **evidence)
         c = int(np.argmax(np.where(hit, stat, -np.inf)))
         snr_db = 10 * math.log10(max(stat[c] - 1, 1e-3))
-        R = crb_polar(snr_db, d.bandwidth) + glint_polar(xy[c], self.rsu, self.bore)
+        R = crb_polar(snr_db, bw) + glint_polar(xy[c], self.rsu, self.bore)
         z = np.array([u[c], r[c]]) + np.linalg.cholesky(R) @ self.rng.normal(size=2)
         return SensingReport(d.t, True, z, R, snr_db, float(stat[c]), eta,
                              float(10 * math.log10(1 + leak[c])), **evidence)

@@ -38,6 +38,9 @@ class SiteConfig:
     ``df``), ``l_proc`` (dB), ``inr`` (dB), ``element_pattern`` (False: isotropic 0 dBi),
     ``e_max`` (dBi).
     Detection: ``pfa``, ``snr_offset_db``, ``snr_sigma_db``, ``sigma_hermite_nodes``.
+    Resolution: ``sensing_bandwidth_hz`` is the bandwidth of the sensing range processing. It sets
+    range-cell coupling and the delay CRB only; the integration gain still comes from the grant's
+    REs. None uses the grant bandwidth (n_prb x 12 x df), as in the paper.
     Scene: ``rcs_prior_dbsm`` (design RCS used when the tracker sends none), ``interference``
     (corridor interference in ``model.ue_link``), ``ue_clutter``.
     ``extra`` holds any further ``model.P`` keys to override.
@@ -66,6 +69,7 @@ class SiteConfig:
     snr_offset_db: float = 0.0
     snr_sigma_db: float = 0.0
     sigma_hermite_nodes: int = 5
+    sensing_bandwidth_hz: Optional[float] = None
     rcs_prior_dbsm: Optional[float] = None
     interference: Optional[bool] = None
     ue_clutter: Optional[bool] = None
@@ -84,6 +88,9 @@ class SiteConfig:
             out["p_ref_dbm"] = self.eirp_dbm - 10 * math.log10(m) - (e if self.element_pattern else 0.0)
         out.update(self.extra)
         return out
+
+    def resolution_bandwidth(self, grant_bw):
+        return grant_bw if self.sensing_bandwidth_hz is None else float(self.sensing_bandwidth_hz)
 
     def is_default(self):
         return (not self.overrides() and not self.cone_angle and self.element_pattern

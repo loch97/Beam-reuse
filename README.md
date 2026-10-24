@@ -133,6 +133,36 @@ RCS: `RcsPopulation.from_priors({cls: (mean, sd)}, omega, rho_frame)` sets per-c
 
 Robustness and geometry: a box with no face visible from the RSU (a ghost track at or next to the mast) is handled as a point target, flagged as `info["degenerate_box"]`. `site.road_points(origin, heading, lane_offsets, s_range, spacing, kinds)` places served UEs along a road of any direction. `site.ue_link_site(xy, kind, rsu, bore, rng, interference_dbm=None)` gives serving-grid SINR and grid beam without the corridor geometry, with optional external interference.
 
+#### Second-round integration notes
+
+**Resolution bandwidth (R0).** `SiteConfig(sensing_bandwidth_hz=...)` sets the bandwidth of the sensing range processing. It affects range-cell coupling (`delay_power`/`delay_amplitude`) and the delay CRB only. Integration gain still comes from the grant's `n_re`. `BeamDecision.bandwidth` remains the grant bandwidth (n_prb·12·df); the new `BeamDecision.resolution_bw` is the one used for coupling. Unset, the two are equal, as in the paper. At full-band resolution a vehicle's scatterers fall in different range cells, so the strongest cell's SNR and the box P_D are lower than at grant resolution.
+
+**Quality calibration (R1).** `SensingRequirement(quality_logistic=(a, b), min_quality_prob=p)` requires P(quality | pred_cell_snr_db) = 1/(1+exp(−(a + b·snr))) ≥ p. The SNR is the front end's calibrated `pred_cell_snr_db`, offset already removed. Each decision reports `quality_prob`. `exp_quality_cells` counts model scatterer cells, not RT/CLEAN points.
+
+**Unmet requirements (R2).** `plan(..., on_unmet=...)` (also a `BeamFrontEnd` argument) chooses what happens when no reuse meets both P_D ≥ τ and the requirement. Everything is done in one search, reusing cached P_D and cell SNRs, and `info["fallback"]` records the path taken:
+
+| `on_unmet` | Result | `info["fallback"]` |
+|---|---|---|
+| `"dedicated"` (default) | Dedicated sensing beam | `"dedicated"` |
+| `"reuse_pd"` | Cheapest reuse with P_D ≥ τ, identical to planning without the requirement | `"reuse_pd"` |
+| `"best_quality"` | Reuse with the largest `pred_cell_snr_db` among those with P_D ≥ τ | `"best_quality"` |
+
+`info["fallback"]` is `"none"` when the requirement is met or absent. `requirement_met` is False for the fallback paths.
+
+**Speed (R3).** Before the full box P_D, `target.pd_upper_bound` gives a rigorous, cheap clutter-free bound per beam:
+- the transmit gain is bounded over the pose nodes' direction span via Bernstein's inequality (`gain_upper_bound`);
+- range is the minimum over the nodes, element gain the maximum, and coupling at most 1.
+
+Beams whose bound is below τ get P_D = −1 ("screened, below τ") without computing cell SNRs. Cell SNRs are cached per (grant, candidate) and shared by P_D, quality and the fallbacks. Lazy and exhaustive search still pick the same beam.
+
+**RCS evidence semantics (R4).**
+1. `rcs_stat` is the designated cell's power divided by the reported noise floor, as a linear value on the same scale as `eta = −ln(pfa)`. Set `SiteConfig(pfa=...)` to the detector's equivalent Pfa; for a 13 dB CLEAN threshold that is exp(−10^1.3), giving η ≈ 19.95.
+2. Report `rcs_stat` and `rcs_floor_db` on every look, whether `rcs_detected` is True or False. Misses enter through the event factor.
+3. `rcs_floor_db` = 10·log10(floor / thermal noise of the model). It is 0 dB without UE leakage. If the RT image noise is scaled (re_scaling), report the floor relative to the noise that the front end's SNR model assumes.
+4. Class strings are free-form but must match between `RcsPopulation.from_priors({...})` and `TrackReport.cls`. `"car"`, `"bus"` and `"truck"` work. An unknown class falls back to the class mixture.
+
+If the designated cell is read at the decision-time predicted dominant position (`BeamDecision.u_hat`, `r_hat`), construct `BeamFrontEnd(..., evidence_cell="predicted")`. The evidence curve and `rcs_look` then model a fixed cell, so the pose error moves the scatterers out of it. This matters at fine resolution: 0.8 m cells against pose errors of about 1 m. The default `"scatterer"` assumes the cell follows the dominant scatterer, as the closed-loop back end does.
+
 ### Extended target in the paper pipeline and RT check
 
 `python -m isac.simulate --target-model extended` runs the paper conditions with the multi-scatterer box in place of the point detector (`target.ExtendedDetector`), paired by seed block with the point model, and writes to `outputs/simulation_extended/`. The paper's effective RCS prior is kept: the dominant scatterer is lowered by the box's own contribution at the full-band reference cell (0–1.3 dB per frame), so the two models agree at that cell.

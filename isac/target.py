@@ -173,8 +173,77 @@ def cell_snr(W, nodes, n_re, bandwidth):
     return np.einsum("bnk,nck->bnc", rho, coupling, optimize=True)
 
 
+def gain_upper_bound(W, u_lo, u_hi):
+    """Rigorous upper bound of G_w(u) = |a(u)^T w|^2 / M over u in [u_lo, u_hi], per beam.
+
+    G is a trigonometric polynomial of degree M - 1 in pi*u, so by Bernstein's inequality
+    |dG/du| <= pi (M - 1) max G <= pi (M - 1) ||w||_1^2 / M. The maximum on a grid of step h
+    plus h/2 times that slope bounds the interval maximum. h is chosen so the margin is 5% of
+    ||w||_1^2 / M (5% of the peak for unit-modulus beams).
+    """
+    W = np.atleast_2d(W)
+    m = W.shape[1]
+    glob = np.abs(W).sum(axis=1) ** 2 / m
+    h = 0.1 / (math.pi * max(m - 1, 1))
+    n = max(2, int(math.ceil((u_hi - u_lo) / h)) + 1)
+    grid = np.linspace(u_lo, u_hi, n)
+    step = (u_hi - u_lo) / (n - 1) if n > 1 else 0.0
+    return array_gain(W, grid).max(axis=1) + 0.5 * step * math.pi * (m - 1) * glob
+
+
+def pd_upper_bound(W, nodes, n_re, shifts_db, weights):
+    """Cheap clutter-free upper bound of the RCS-averaged extended P_D, per beam.
+
+    Every scatterer gets the bounded transmit gain over the direction span of all pose nodes, its
+    smallest range over the nodes and the maximum element gain; cell coupling is bounded by 1, so
+    the cell SNR is at most the sum over scatterers. UE leakage only lowers P_D.
+    """
+    lo, hi = float(nodes.u.min()), float(nodes.u.max())
+    g = gain_upper_bound(W, lo, hi)
+    r_min = nodes.r.min(axis=0)
+    unit = float(np.sum(10 ** (V.rc_snr_db(1.0, 0.0, r_min, nodes.sigma_dbsm, 90.0, n_re) / 10)))
+    lp = math.log(V.P["pfa"])
+    scale = 10 ** (np.atleast_1d(np.asarray(shifts_db, float)) / 10)
+    pd = np.exp(lp / (1 + scale[:, None] * unit * g[None, :]))
+    return np.asarray(weights) @ pd
+
+
+def focus_snr(W, nodes, n_re, bandwidth, u0, r0):
+    """Mean SNR in one fixed receive cell (u0, r0) at every pose node: (beams, nodes), linear."""
+    tx = array_gain(W, nodes.u)
+    rho = 10 ** (V.rc_snr_db(tx, nodes.u, nodes.r, nodes.sigma_dbsm, nodes.theta, n_re) / 10)
+    return np.einsum("bnk,nk->bn", rho,
+                     V.rx_rel(u0 - nodes.u) * delay_power(r0 - nodes.r, bandwidth))
+
+
+def fixed_cell_pd_shifts(W, nodes, n_re, bandwidth, u0, r0, clutter=None, shifts_db=(0.0,)):
+    """Crossing probability of the fixed cell (u0, r0), averaged over pose nodes: (shifts, beams).
+
+    This is the designated-cell event when the back end reads the cell at the predicted position
+    rather than wherever the scatterer actually is.
+    """
+    W = np.atleast_2d(W)
+    rho = focus_snr(W, nodes, n_re, bandwidth, u0, r0)
+    scale = 10 ** (np.atleast_1d(np.asarray(shifts_db, float)) / 10)
+    lp = math.log(V.P["pfa"])
+    if clutter is None:
+        leaks, cw = np.zeros((len(W), 1)), np.ones(1)
+    else:
+        cu, cr, cs, ct = clutter[:4]
+        cu = np.atleast_1d(cu)
+        cw = np.asarray(clutter[4]) if len(clutter) > 4 else np.ones(len(cu)) / len(cu)
+        cp = 10 ** (V.rc_snr_db(array_gain(W, cu), cu, cr, cs, ct, n_re) / 10)
+        leaks = cp * (V.rx_rel(u0 - cu) * delay_power(r0 - cr, bandwidth))[None, :]
+    out = np.zeros((len(scale), len(W)))
+    for i, x in enumerate(scale):
+        for q in range(leaks.shape[1]):
+            L = leaks[:, q, None]
+            out[i] += cw[q] * (np.exp(lp * (1 + L) / (1 + L + x * rho)) @ nodes.w)
+    return out
+
+
 def extended_pd_shifts(W, nodes, n_re, bandwidth, clutter=None, focus=None, shifts_db=(0.0,),
-                       screen=None):
+                       screen=None, rho=None):
     """P_D of the extended target for each RCS shift and beam: arrays (shifts, beams).
 
     Every scatterer RCS in ``nodes`` moves by the same shift (dB), so a shift evaluates the target
@@ -182,13 +251,14 @@ def extended_pd_shifts(W, nodes, n_re, bandwidth, clutter=None, focus=None, shif
     UE-reflector directions ``cu`` with quadrature weights ``cw``, range ``cr``, RCS ``cs`` and
     elevation ``ct``. ``screen`` = (threshold, shift weights): beams whose shift-averaged
     clutter-free value (an upper bound) is below the threshold skip the clutter evaluation and
-    return -1. Returns (pd, clutter-free pd).
+    return -1. ``rho`` passes precomputed ``cell_snr(W, nodes, n_re, bandwidth)``.
+    Returns (pd, clutter-free pd).
     """
     focus = FP["ext_focus"] if focus is None else focus
     W = np.atleast_2d(W)
     scale = 10 ** (np.atleast_1d(np.asarray(shifts_db, float)) / 10)
     lp = math.log(V.P["pfa"])
-    rho = cell_snr(W, nodes, n_re, bandwidth)
+    rho = cell_snr(W, nodes, n_re, bandwidth) if rho is None else rho
     if focus == "dominant":
         rho = rho[:, :, [nodes.dom]]
         cu_nodes, cr_nodes = nodes.u[:, [nodes.dom]], nodes.r[:, [nodes.dom]]
