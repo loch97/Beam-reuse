@@ -597,10 +597,16 @@ class BeamFrontEnd:
         own MCS budget.
 
         Selection: if the single-grant ``plan`` already meets P_D >= tau and the requirement, its
-        decision is returned (so ``max_grants=1`` is ``plan``). Otherwise grants are added
-        greedily: a choice that makes the set feasible wins at the least total cost; else the
-        candidate with the largest strongest-cell SNR gain per (cost + ``cost_eps_bits``). A
-        final pass drops grants whose removal keeps the set feasible, most expensive first.
+        decision is returned (so ``max_grants=1`` is ``plan``). Otherwise a greedy growth runs
+        from several seeds: each grant's best-SNR candidate, its best zero-cost candidate and
+        its cheapest feasible one (the best single grant is always a seed). A grant is added
+        only if the combined strongest-cell SNR strictly rises and P_D does not fall (UE
+        leakage can make an addition harmful); a feasible addition wins at least total cost,
+        else zero-cost candidates rank by SNR gain and costed ones by gain per bit. Feasible
+        sets are pruned (most expensive part first). The cheapest feasible set over all seeds
+        is returned; with none, the highest-SNR set, which is never worse than the best single
+        grant. ``info["steps_snr_db"]`` gives the combined SNR after each addition.
+        ``cost_eps_bits`` is kept for compatibility and no longer used.
         If no set within ``max_grants`` is feasible, ``on_unmet`` decides: "dedicated" (dedicated
         beam), "reuse_pd" (single-grant cheapest P_D-feasible reuse), "best_quality" (the
         greedy set, flagged unmet).
@@ -642,49 +648,91 @@ class BeamFrontEnd:
             pool.append(dict(i=i, g=g, e=e, cs=cs, cost=e["n_re"] * e["dse"][cs],
                              rho=cell_snr(W, nodes, e["n_re"], bw),
                              leak=self._mean_leak(W, nodes, e["n_re"], bw, e["clutter"])))
-        rho = np.zeros(nodes.u.shape)
-        leak = np.zeros(nodes.u.shape)
-        chosen, cur_snr, feasible = [], -np.inf, False
-
         def ok(pd, snr, cells):
             return np.array([round(float(p), PD_DECIMALS) >= self.tau and self.meets(req, s, c)
                              for p, s, c in zip(pd, snr, cells)])
 
-        while len(chosen) < max_grants:
-            used = {k for k, _ in chosen}
-            best_feas, best_gain = None, None
-            for k, P in enumerate(pool):
-                if k in used:
-                    continue
-                pd, snr, cells = self._combined(rho[None] + P["rho"], leak[None] + P["leak"],
-                                                nodes, sigma, weights, s_q)
-                total = sum(pool[a]["cost"][b] for a, b in chosen) + P["cost"]
-                f = ok(pd, snr, cells)
-                for j in np.flatnonzero(f):
-                    key = (total[j], -snr[j], k, j)
-                    if best_feas is None or key < best_feas[0]:
-                        best_feas = (key, k, j)
-                ratio = (snr - cur_snr if np.isfinite(cur_snr) else snr) / (P["cost"] + cost_eps_bits)
-                j = int(np.argmax(ratio))
-                if (snr[j] > cur_snr) and (best_gain is None or ratio[j] > best_gain[0]):
-                    best_gain = (ratio[j], k, j)
-            pick = best_feas if best_feas is not None else best_gain
-            if pick is None:
-                break
-            _, k, j = pick
-            chosen.append((k, j))
-            rho, leak = rho + pool[k]["rho"][j], leak + pool[k]["leak"][j]
-            cur_snr = self._combined(rho[None], leak[None], nodes, sigma, weights, s_q)[1][0]
-            if best_feas is not None:
-                feasible = True
-                break
-        if feasible and len(chosen) > 1:
-            for k, j in sorted(chosen, key=lambda kj: -pool[kj[0]]["cost"][kj[1]]):
-                rest = [(a, b) for a, b in chosen if (a, b) != (k, j)]
-                r_ = sum(pool[a]["rho"][b] for a, b in rest)
-                l_ = sum(pool[a]["leak"][b] for a, b in rest)
-                if ok(*self._combined(r_[None], l_[None], nodes, sigma, weights, s_q))[0]:
-                    chosen = rest
+        def cost_of(chosen):
+            return float(sum(pool[a]["cost"][b] for a, b in chosen))
+
+        def evaluate(chosen):
+            r_ = sum(pool[a]["rho"][b] for a, b in chosen)
+            l_ = sum(pool[a]["leak"][b] for a, b in chosen)
+            pd, snr, cells = self._combined(r_[None], l_[None], nodes, sigma, weights, s_q)
+            return float(pd[0]), float(snr[0]), float(cells[0]), bool(ok(pd, snr, cells)[0])
+
+        def grow(seed):
+            """Greedy growth from one part. A grant is added only if the combined strongest-cell
+            SNR strictly rises and P_D does not fall. A feasible addition wins at least total
+            cost; otherwise zero-cost candidates rank by SNR gain, costed ones by gain per bit."""
+            chosen = [seed]
+            pd0, snr0, _, feas = evaluate(chosen)
+            steps = [snr0]
+            rho = pool[seed[0]]["rho"][seed[1]].copy()
+            leak = pool[seed[0]]["leak"][seed[1]].copy()
+            while not feas and len(chosen) < max_grants:
+                used = {k for k, _ in chosen}
+                best_feas, best_free, best_cost = None, None, None
+                for k, P in enumerate(pool):
+                    if k in used:
+                        continue
+                    pd, snr, cells = self._combined(rho[None] + P["rho"], leak[None] + P["leak"],
+                                                    nodes, sigma, weights, s_q)
+                    gain = snr - snr0
+                    better = (gain > 1e-9) & (np.round(pd, PD_DECIMALS) >= round(pd0, PD_DECIMALS))
+                    total = cost_of(chosen) + P["cost"]
+                    for jj in np.flatnonzero(better & ok(pd, snr, cells)):
+                        key = (total[jj], -snr[jj], k, jj)
+                        if best_feas is None or key < best_feas[0]:
+                            best_feas = (key, k, jj)
+                    free = np.flatnonzero(better & (P["cost"] == 0))
+                    if free.size:
+                        jj = free[np.argmax(gain[free])]
+                        if best_free is None or gain[jj] > best_free[0]:
+                            best_free = (gain[jj], k, jj)
+                    paid = np.flatnonzero(better & (P["cost"] > 0))
+                    if paid.size:
+                        ratio = gain[paid] / P["cost"][paid]
+                        jj = paid[np.argmax(ratio)]
+                        if best_cost is None or ratio.max() > best_cost[0]:
+                            best_cost = (ratio.max(), k, jj)
+                pick = best_feas or best_free or best_cost
+                if pick is None:
+                    break
+                _, k, jj = pick
+                chosen.append((k, jj))
+                rho, leak = rho + pool[k]["rho"][jj], leak + pool[k]["leak"][jj]
+                pd0, snr0, _, feas = evaluate(chosen)
+                steps.append(snr0)
+            if feas and len(chosen) > 1:  # drop parts not needed, most expensive first
+                for kj in sorted(chosen, key=lambda kj: -pool[kj[0]]["cost"][kj[1]]):
+                    rest = [x for x in chosen if x != kj]
+                    if evaluate(rest)[3]:
+                        chosen = rest
+            return chosen, steps
+
+        seeds = set()
+        for k, P in enumerate(pool):
+            pd, snr, cells = self._combined(P["rho"], P["leak"], nodes, sigma, weights, s_q)
+            seeds.add((k, int(np.argmax(snr))))
+            free = np.flatnonzero(P["cost"] == 0)
+            if free.size:
+                seeds.add((k, int(free[np.argmax(snr[free])])))
+            f = np.flatnonzero(ok(pd, snr, cells))
+            if f.size:
+                seeds.add((k, int(f[np.lexsort((-snr[f], P["cost"][f]))[0]])))
+        results = []
+        for seed in sorted(seeds):
+            chosen, steps = grow(seed)
+            _, snr_c, _, feas = evaluate(chosen)
+            results.append((feas, cost_of(chosen), snr_c, chosen, steps))
+        feasible_sets = [r for r in results if r[0]]
+        if feasible_sets:
+            feasible, _, _, chosen, steps = min(feasible_sets, key=lambda r: (r[1], -r[2], len(r[3])))
+        elif results:
+            feasible, _, _, chosen, steps = max(results, key=lambda r: (r[2], -r[1], -len(r[3])))
+        else:
+            feasible, chosen, steps = False, [], []
         if not chosen or (not feasible and on_unmet != "best_quality"):
             d = self.plan(track, grants, rcs, t, requirement=req, on_unmet=on_unmet)
             d.info["multi"] = False
@@ -722,7 +770,8 @@ class BeamFrontEnd:
             info=dict(multi=True, fallback="none" if feasible else "best_quality",
                       rcs_source=rcs.source, rcs_nodes=sigma.tolist(),
                       rcs_weights=weights.tolist(), degenerate_box=pred["degenerate_box"],
-                      leakage="mean over UE quadrature per grant"),
+                      leakage="mean over UE quadrature per grant",
+                      steps_snr_db=[float(x) for x in steps], seeds=len(seeds)),
             pred_cell_snr_db=float(snr),
             exp_quality_cells=float(cells),
             requirement_met=None if req is None else bool(feasible),

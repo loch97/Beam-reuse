@@ -782,6 +782,24 @@ class MultiGrantTests(unittest.TestCase):
                               pd_curve_sigma=d.pd_curve_sigma, pd_curve=d.pd_curve)
             self.assertGreater(lm.unit_db.max(), fe.rcs_look(dp, rep, exact).unit_db.max())
         self.assertTrue(np.all(np.diff(d.pd_curve) >= -1e-12))
+        self.assertTrue(np.all(np.diff(d.info["steps_snr_db"]) > 0))
+
+    def test_never_worse_than_best_single_grant(self):
+        """R5-fix: additions must not lower the combined SNR below the best single grant."""
+        from isac.interfaces import SensingRequirement
+
+        fe = BeamFrontEnd(site=self.site, on_unmet="best_quality")
+        tr = self.trk.report()
+        tab = fe.plan(tr, self.grants, self.rcs, return_table=True).candidates
+        best = float(np.nanmax(tab["pred_cell_snr_db"][np.round(tab["pd"], 12) >= fe.tau]))
+        for k in (2, 3, 4):
+            d = fe.plan_multi(tr, self.grants, self.rcs,
+                              requirement=SensingRequirement(min_cell_snr_db=200.0), max_grants=k)
+            self.assertFalse(d.requirement_met)
+            self.assertEqual(d.info["fallback"], "best_quality")
+            self.assertGreaterEqual(d.pred_cell_snr_db, best - 1e-9)
+            self.assertLessEqual(len(d.parts), k)
+            self.assertTrue(np.all(np.diff(d.info["steps_snr_db"]) > 0))
 
 
 if __name__ == "__main__":

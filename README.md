@@ -174,10 +174,17 @@ Model:
 
 Search:
 - If the single-grant `plan` already meets P_D ≥ τ and the requirement, that decision is returned, with `parts` of length 1 and `info["multi"] = False`. `max_grants=1` therefore equals `plan`.
-- Otherwise grants are added greedily. A choice that makes the set feasible wins at the least total cost; otherwise the candidate with the largest strongest-cell SNR gain per (cost + 1 bit) is added. A final pass drops grants whose removal keeps the set feasible.
+- Otherwise a greedy growth runs from several seeds: each grant's best-SNR candidate, its best zero-cost candidate and its cheapest feasible candidate. The best single grant is therefore always a seed.
+  - A grant is added only if the combined strongest-cell SNR strictly rises and P_D does not fall.
+  - A feasible addition wins at the least total cost. Otherwise zero-cost candidates rank by SNR gain and costed ones by gain per bit.
+  - Feasible sets are pruned, most expensive part first.
+  - The cheapest feasible set over all seeds is returned. If there is none, the highest-SNR set is returned, which is never worse than the best single grant.
+  - `info["steps_snr_db"]` traces the combined SNR after each addition.
 - If no set is feasible, `on_unmet` decides: `"dedicated"`, `"reuse_pd"` (single-grant), or `"best_quality"` (the greedy set, flagged unmet).
 
 Result: `mode="reuse_multi"`, `parts` = [{grant, ue_id, tag, weights, n_re, bandwidth, loss_db, mcs, dse, cost_bits}], with combined `pd_pred`, `pred_cell_snr_db`, `exp_quality_cells`, `requirement_met`, summed `cost_bits` and `n_re`, and `weights = grant = None`. `rcs_look` sums the parts' unit SNRs. The closed-loop simulator does not execute multi-grant looks.
+
+RT execution note: the local RT runs each part separately and ORs the detections. That is more conservative than the model's energy addition (MRC), so calibration will show the gap.
 
 Two limits seen in testing:
 - Adding a grant also adds its UE's leakage. One grant lowered the combined strongest-cell SNR from 48.4 to 42.3 dB, so grants must be chosen, not just added.
