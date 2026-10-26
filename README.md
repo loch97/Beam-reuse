@@ -184,7 +184,7 @@ Search:
 
 Result: `mode="reuse_multi"`, `parts` = [{grant, ue_id, tag, weights, n_re, bandwidth, loss_db, mcs, dse, cost_bits}], with combined `pd_pred`, `pred_cell_snr_db`, `exp_quality_cells`, `requirement_met`, summed `cost_bits` and `n_re`, and `weights = grant = None`. `rcs_look` sums the parts' unit SNRs. The closed-loop simulator does not execute multi-grant looks.
 
-RT execution note: the local RT runs each part separately and ORs the detections. That is more conservative than the model's energy addition (MRC), so calibration will show the gap.
+RT execution note: the local RT detects each part separately and pools the points (detection-level OR). This is a different detector from the model's energy addition: detection probability, false-alarm rate and point-count distribution all differ, with no general ordering. Several parts can also detect the same scatterer and inflate the point count. Multi-grant P_D therefore needs its own calibration.
 
 Two limits seen in testing:
 - Adding a grant also adds its UE's leakage. One grant lowered the combined strongest-cell SNR from 48.4 to 42.3 dB, so grants must be chosen, not just added.
