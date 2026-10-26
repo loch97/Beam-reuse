@@ -190,6 +190,21 @@ Two limits seen in testing:
 - Adding a grant also adds its UE's leakage. One grant lowered the combined strongest-cell SNR from 48.4 to 42.3 dB, so grants must be chosen, not just added.
 - Under pointing uncertainty P_D saturates. Pose hypotheses outside every beam's main lobe are not fixed by more energy (best pair P_D 0.897 when no single grant reached 0.9). Multi-grant mainly raises measurement quality (SNR), not P_D.
 
+#### Third-round integration notes
+
+**Version pin.** The stable integration point is commit `d786264`: the code of `8fd8a63` plus a README correction. A tag `isac-frontend-v1` was created for it, but this session cannot push tags (branch pushes only), so pin the commit hash, or create the tag on that hash from a machine with push rights. Later changes are additive: fields are only added and defaults reproduce the paper pipeline. A breaking change would be stated in its commit message.
+
+**Q1 — P_D versus SNR offset.** Every decision now carries `BeamDecision.pd_offset_curve = (offsets_db, pd)`, with offsets −20…+20 dB in 1 dB steps. Each value is the decision's own event recomputed with an SNR offset added to every target return:
+- any scatterer cell detected;
+- averaged over pose, RCS and the site's calibration nodes;
+- including UE leakage, per grant for multi-grant looks.
+
+At offset 0 it equals `pd_pred` exactly. Fit RT detections to this curve directly: the Bernoulli likelihood of the observed detection at offset Δ. The fitted Δ then refers to the same event, rather than a Swerling curve applied to a summary SNR. `BeamFrontEnd.offset_curve(W, pred, n_re, bw, clutter, sigma, weights, offsets)` computes it for any beam.
+
+**Q2 — frame-level assignment.** `BeamFrontEnd.plan_frame(tracks, grants, rcs=None, t=None, requirements=None, on_unmet=None)` plans the tracks greedily in the given order, so put confirmed or most-hit tracks first. A grant carries one executed beam. A later track first tries to share a grant already taken, with that same beam. It shares if the beam gives it P_D ≥ τ and meets its requirement; the decision then has `info["shared_with"]` = the owner's index and `cost_bits` = 0, because the cost is counted once. Otherwise it plans over the grants not yet taken. A grant is never used with two different beams, and `grant` indexes the full list. This is greedy, not a joint optimum.
+
+**Q3 — not done yet.** A P_D model for per-part detection with pooled points is not implemented. The local plan of keeping multi-grant out of the main experiment and calibrating it through Q1 is the safer route for now.
+
 ### Extended target in the paper pipeline and RT check
 
 `python -m isac.simulate --target-model extended` runs the paper conditions with the multi-scatterer box in place of the point detector (`target.ExtendedDetector`), paired by seed block with the point model, and writes to `outputs/simulation_extended/`. The paper's effective RCS prior is kept: the dominant scatterer is lowered by the box's own contribution at the full-band reference cell (0–1.3 dB per frame), so the two models agree at that cell.

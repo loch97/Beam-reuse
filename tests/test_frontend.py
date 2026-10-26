@@ -802,5 +802,57 @@ class MultiGrantTests(unittest.TestCase):
             self.assertTrue(np.all(np.diff(d.info["steps_snr_db"]) > 0))
 
 
+
+class RoundThreeTests(unittest.TestCase):
+    """Q1 decision-event P_D versus SNR offset; Q2 frame-level grant assignment."""
+
+    @classmethod
+    def setUpClass(cls):
+        CL.configure()
+        cls.meta, cls.rsu, cls.bore = LS.geometry()
+        rng = np.random.default_rng(5)
+        cls.grants = CL.Scheduler(cls.rsu, cls.bore, rng, n_grants=4).grants(0.4)
+        cls.trk = TR.CVTracker(0, 0.0, (5.25, -62.0), (0.0, 8.0), cls.rsu, cls.bore,
+                               (4.73, 1.88), P0=np.diag([0.3, 0.3, 0.2, 0.2]))
+        cls.weak = RcsReport(-27.0, -27.0, 0, "x", np.array([-29.0, -27.0, -25.0]), np.ones(3) / 3)
+
+    def test_offset_curve_is_decision_event(self):
+        tr = self.trk.report()
+        for model in ("extended", "point"):
+            fe = BeamFrontEnd(self.rsu, self.bore, model)
+            for d in (fe.plan(tr, self.grants, self.weak), fe.dedicated(tr, [], self.weak, t=0.0)):
+                off, pd = d.pd_offset_curve
+                self.assertAlmostEqual(float(pd[np.argmin(abs(off))]), d.pd_pred, places=9)
+                self.assertTrue(np.all(np.diff(pd) >= -1e-12))
+                self.assertLess(pd[0], 0.5)  # spans the transition for a weak target
+                self.assertGreater(pd[-1], 0.99)
+
+    def test_frame_assignment_never_double_books(self):
+        from isac.interfaces import SensingRequirement
+
+        a = self.trk.report()
+        near = TR.CVTracker(1, 0.0, (5.25, -60.5), (0.0, 8.0), self.rsu, self.bore, (4.73, 1.88),
+                            P0=np.diag([0.3, 0.3, 0.2, 0.2])).report()
+        fe = BeamFrontEnd(self.rsu, self.bore, on_unmet="reuse_pd")
+        d0, d1 = fe.plan_frame([a, near], self.grants)
+        self.assertEqual(d1.info["shared_with"], 0)
+        self.assertEqual((d1.grant, d1.cost_bits), (d0.grant, 0.0))
+        np.testing.assert_array_equal(d1.weights, d0.weights)
+        self.assertGreaterEqual(d1.pd_pred, fe.tau)
+        # a requirement the shared beam cannot meet forces another grant, never grant 0 re-steered
+        hard = SensingRequirement(min_cell_snr_db=200.0)
+        e0, e1 = fe.plan_frame([a, near], self.grants, requirements=[None, hard])
+        self.assertIsNone(e1.info["shared_with"])
+        if e1.mode == "reuse":
+            self.assertNotEqual(e1.grant, e0.grant)
+        for ds in ((d0, d1), (e0, e1)):
+            books = {}
+            for d in ds:
+                if d.mode == "reuse":
+                    if d.grant in books:
+                        np.testing.assert_array_equal(books[d.grant], d.weights)
+                    books[d.grant] = d.weights
+
+
 if __name__ == "__main__":
     unittest.main()

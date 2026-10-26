@@ -82,6 +82,9 @@ def _in_site(fn):
     return wrapper
 
 
+PD_OFFSETS_DB = np.arange(-20.0, 20.01, 1.0)
+
+
 def curve_sigma():
     lo, hi, step = FP["rcs_curve_db"]
     return np.arange(lo, hi + step / 2, step)
@@ -296,6 +299,18 @@ class BeamFrontEnd:
         cells = sum(wk * ((sinr + s >= quality_snr_db).sum(axis=2) @ wn)
                     for s, wk in zip(sigma, weights))
         return snr, cells
+
+    def offset_curve(self, W, pred, n_re, bandwidth, clutter, sigma, weights, offsets=None):
+        """Decision-event P_D of one beam versus an SNR offset added to every target return.
+
+        Same event as ``pd_pred`` (any scatterer cell; pose, RCS and calibration nodes averaged;
+        UE leakage), recomputed at each offset in dB. Returns (offsets_db, pd). At offset 0 it
+        equals the decision's P_D.
+        """
+        offsets = PD_OFFSETS_DB if offsets is None else np.asarray(offsets, float)
+        shifts = (np.asarray(sigma)[:, None] + offsets[None, :]).ravel()
+        pd = self.pd_shifts(np.atleast_2d(W), pred, n_re, bandwidth, clutter, shifts)[:, 0]
+        return offsets.copy(), np.asarray(weights) @ pd.reshape(len(sigma), len(offsets))
 
     @staticmethod
     def meets(req, snr, cells):
@@ -520,6 +535,7 @@ class BeamFrontEnd:
         self._fill_quality(rows, [(i, c)], sigma, weights, s_q)
         grid, curve = self.evidence_curve(W, pred, e["n_re"], e["bw"], e["clutter"])
         snr = float(e["q_snr"][c])
+        offset_curve = self.offset_curve(W, pred, e["n_re"], e["bw"], e["clutter"], sigma, weights)
         return BeamDecision(
             "reuse",
             g.t,
@@ -548,8 +564,78 @@ class BeamFrontEnd:
             candidates=self._table(rows, rows_table) if rows_table is not None else None,
             resolution_bw=float(e["bw"]),
             quality_prob=float(req.quality_prob(snr)) if req is not None else float("nan"),
+            pd_offset_curve=offset_curve,
             **self._pred_fields(pred),
         )
+
+    # -- frame-level planning for several tracks ------------------------------------------------
+    @_in_site
+    def plan_frame(self, tracks, grants, rcs=None, t=None, requirements=None, on_unmet=None):
+        """Grant assignment for several tracks in one frame (greedy, in the given order).
+
+        A grant carries one executed beam. Track k first checks the grants already taken by
+        earlier tracks: if the beam executed there also gives this track P_D >= tau and meets
+        its requirement, it shares that grant and beam at no extra communication cost
+        (``info["shared_with"]`` = index of the owning track, ``cost_bits`` = 0). Otherwise it
+        runs ``plan`` over the grants not yet taken. Put the most important tracks first
+        (e.g. confirmed, most hits). ``rcs`` and ``requirements`` are per-track lists (or None).
+        Returns one BeamDecision per track; ``grant`` indexes the full ``grants`` list.
+        No grant is ever used with two different beams.
+        """
+        n = len(tracks)
+        rcs = [None] * n if rcs is None else list(rcs)
+        reqs = [None] * n if requirements is None else list(requirements)
+        taken = {}  # grant index -> (owner track, decision)
+        out = []
+        for k, tr in enumerate(tracks):
+            r_k = self.default_rcs() if rcs[k] is None else rcs[k]
+            req = reqs[k] if reqs[k] is not None else getattr(tr, "requirement", None)
+            req = req if req is not None and req.active() else None
+            sigma, weights = self.rcs_nodes(r_k)
+            share = None
+            for gi, (owner, dprev) in taken.items():
+                g = grants[gi]
+                pred = self.prediction(tr, g.t)
+                e = self.evaluate_grant(g, pred)
+                W = dprev.weights[None]
+                pd = float(self.detect(W, pred, e["n_re"], e["bw"], e["clutter"], sigma, weights)[0])
+                snr, cells = self.quality(W, pred, e["n_re"], e["bw"], e["clutter"], sigma,
+                                          weights, req.quality_snr_db if req is not None else None)
+                if round(pd, PD_DECIMALS) >= self.tau and self.meets(req, snr[0], cells[0]):
+                    if share is None or pd > share[0]:
+                        share = (pd, gi, owner, dprev, pred, e, float(snr[0]), float(cells[0]))
+            if share is not None:
+                pd, gi, owner, dprev, pred, e, snr, cells = share
+                grid, curve = self.evidence_curve(dprev.weights, pred, e["n_re"], e["bw"],
+                                                  e["clutter"])
+                d = BeamDecision(
+                    "reuse", grants[gi].t, grant=gi, ue_id=grants[gi].ue_id,
+                    weights=dprev.weights, tag=dprev.tag, pd_pred=pd, pd_curve_sigma=grid,
+                    pd_curve=curve, ue_loss_db=dprev.ue_loss_db, mcs=dprev.mcs, dse=dprev.dse,
+                    cost_bits=0.0, n_re=dprev.n_re, bandwidth=dprev.bandwidth,
+                    rcs_design_dbsm=r_k.design_dbsm, rcs_mean_dbsm=float(weights @ sigma),
+                    info=dict(shared_with=owner, fallback="none", rcs_source=r_k.source,
+                              degenerate_box=pred["degenerate_box"]),
+                    pred_cell_snr_db=snr, exp_quality_cells=cells,
+                    requirement_met=None if req is None else True,
+                    resolution_bw=float(e["bw"]),
+                    quality_prob=float(req.quality_prob(snr)) if req is not None else float("nan"),
+                    pd_offset_curve=self.offset_curve(dprev.weights, pred, e["n_re"], e["bw"],
+                                                      e["clutter"], sigma, weights),
+                    **self._pred_fields(pred))
+                d.parts = [self._single_part(d)]
+                out.append(d)
+                continue
+            free = [i for i in range(len(grants)) if i not in taken]
+            d = self.plan(tr, [grants[i] for i in free], r_k, t, requirement=req, on_unmet=on_unmet)
+            if d.grant is not None:
+                d.grant = free[d.grant]
+            if d.mode == "reuse":
+                d.parts = [self._single_part(d)]
+                taken[d.grant] = (k, d)
+            d.info["shared_with"] = None
+            out.append(d)
+        return out
 
     # -- multi-grant looks ----------------------------------------------------------------------
     def _part(self, g, i, e, c):
@@ -747,6 +833,8 @@ class BeamFrontEnd:
                  for a, b in chosen]
         grid = curve_sigma()
         curve = self._multi_curve(parts, pool, chosen, nodes, bw, pred, grid)
+        offset_pd = np.array([self._combined(xo * rho[None], leak[None], nodes, sigma, weights,
+                                             None)[0][0] for xo in 10 ** (PD_OFFSETS_DB / 10)])
         multi = len(parts) > 1
         return BeamDecision(
             "reuse_multi" if multi else "reuse",
@@ -778,6 +866,7 @@ class BeamFrontEnd:
             resolution_bw=float(bw),
             quality_prob=float(req.quality_prob(snr)) if req is not None else float("nan"),
             parts=parts,
+            pd_offset_curve=(PD_OFFSETS_DB.copy(), offset_pd),
             **self._pred_fields(pred),
         )
 
@@ -867,6 +956,7 @@ class BeamFrontEnd:
             requirement_met=None if req is None else self.meets(req, snr[0], cells[0]),
             resolution_bw=float(bw),
             quality_prob=float(req.quality_prob(snr[0])) if req is not None else float("nan"),
+            pd_offset_curve=self.offset_curve(Wd[c], pred, n_re, bw, None, sigma, weights),
             **self._pred_fields(pred),
         )
 

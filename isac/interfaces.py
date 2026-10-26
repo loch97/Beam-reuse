@@ -149,6 +149,7 @@ class BeamDecision:
     resolution_bw: float = float("nan")
     quality_prob: float = float("nan")
     parts: Optional[list] = None
+    pd_offset_curve: Optional[tuple] = None
 
 
 @dataclass
