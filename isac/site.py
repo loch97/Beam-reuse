@@ -190,3 +190,27 @@ def ue_link_site(xy, kind, rsu, bore, rng, interference_dbm=None):
     if interference_dbm is not None:
         noise = V.db(10 ** (V.NOISE_UE / 10) + 10 ** ((np.asarray(interference_dbm) - pen) / 10))
     return s - noise, k0, u, r, th
+
+
+def young_track_extent(min_extent=(4.5, 1.9), min_hits=3, class_extents=None):
+    """Extent prior for ``BeamFrontEnd(extent_prior=...)``.
+
+    Returns a function of a TrackReport giving the box extent to plan with. A track with fewer
+    than ``min_hits`` hits (``TrackReport.hits``; unknown counts as young) gets at least
+    ``min_extent`` per axis; with ``class_extents`` ({cls: (L, W)}, e.g. from
+    ``rt_extended.vehicle_extent``) a known class also gets at least its class box. A track
+    without extent gets the prior box. Older tracks keep their own extent.
+    """
+    def prior(track):
+        ext = track.extent
+        young = track.hits is None or track.hits < min_hits
+        if not young:
+            return ext
+        floor = np.asarray(min_extent, float)
+        if class_extents and track.cls in class_extents:
+            floor = np.maximum(floor, np.asarray(class_extents[track.cls], float))
+        if ext is None:
+            return tuple(float(v) for v in floor)
+        return tuple(float(v) for v in np.maximum(np.asarray(ext, float), floor))
+
+    return prior

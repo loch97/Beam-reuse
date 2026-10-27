@@ -28,6 +28,8 @@ class SensingRequirement:
     ``quality_logistic`` = (a, b) with ``min_quality_prob``: an externally fitted calibration
     P(quality | pred_cell_snr_db) = 1 / (1 + exp(-(a + b * pred_cell_snr_db))) must reach
     ``min_quality_prob``. ``pred_cell_snr_db`` is the front end's (calibrated) value.
+    ``min_coverage_db``: the beam's worst-case gain over the predicted box inflated by k sigma,
+    relative to its own peak (``BeamDecision.coverage_db``), must reach this value.
     Fields left at None impose nothing.
     """
 
@@ -36,11 +38,13 @@ class SensingRequirement:
     min_cells: Optional[float] = None
     quality_logistic: Optional[tuple] = None
     min_quality_prob: Optional[float] = None
+    min_coverage_db: Optional[float] = None
 
     def active(self):
         return self.min_cell_snr_db is not None or (
             self.min_cells is not None and self.quality_snr_db is not None) or (
-            self.quality_logistic is not None and self.min_quality_prob is not None)
+            self.quality_logistic is not None and self.min_quality_prob is not None) or (
+            self.min_coverage_db is not None)
 
     def quality_prob(self, pred_cell_snr_db):
         """P(back end measures well | predicted strongest-cell SNR) from the external logistic
@@ -69,6 +73,7 @@ class TrackReport:
     heading: Optional[float] = None
     heading_std: Optional[float] = None
     requirement: Optional[SensingRequirement] = None
+    hits: Optional[int] = None
 
 
 @dataclass
@@ -150,6 +155,9 @@ class BeamDecision:
     quality_prob: float = float("nan")
     parts: Optional[list] = None
     pd_offset_curve: Optional[tuple] = None
+    coverage_db: float = float("nan")
+    coverage_gain_dbi: float = float("nan")
+    exp_detected_cells: float = float("nan")
 
 
 @dataclass

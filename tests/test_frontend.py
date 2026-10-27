@@ -854,5 +854,114 @@ class RoundThreeTests(unittest.TestCase):
                     books[d.grant] = d.weights
 
 
+
+class CoverageObjectiveTests(unittest.TestCase):
+    """Round 4: coverage diagnostics, selection objectives, covering dedicated width, extent prior."""
+
+    @classmethod
+    def setUpClass(cls):
+        from isac.site import SiteConfig
+
+        CL.configure()
+        cls.meta, cls.rsu, cls.bore = LS.geometry()
+        rng = np.random.default_rng(5)
+        cls.grants = CL.Scheduler(cls.rsu, cls.bore, rng, n_grants=4).grants(0.4)
+        cls.trk = TR.CVTracker(0, 0.0, (5.25, -62.0), (0.0, 8.0), cls.rsu, cls.bore,
+                               (4.73, 1.88), P0=np.diag([0.8, 0.8, 0.2, 0.2]))
+        cls.rcs = RcsReport(-1.0, 0.5, 0, "x", np.array([-3.0, 0.0, 3.0]), np.ones(3) / 3)
+        cls.site = SiteConfig(rsu_xy=cls.rsu, boresight_rad=cls.bore, sensing_bandwidth_hz=46.08e6)
+
+    def _check_diag(self, d):
+        self.assertTrue(np.isfinite(d.coverage_db) and d.coverage_db <= 1e-9)
+        self.assertTrue(np.isfinite(d.coverage_gain_dbi))
+        self.assertTrue(0.0 <= d.exp_detected_cells <= 6.0)
+
+    def test_diagnostics_on_every_decision_kind(self):
+        tr = self.trk.report()
+        fe = BeamFrontEnd(site=self.site, on_unmet="reuse_pd")
+        d = fe.plan(tr, self.grants, self.rcs)
+        self._check_diag(d)
+        self._check_diag(fe.dedicated(tr, [], self.rcs, t=0.4))
+        near = TR.CVTracker(1, 0.0, (5.25, -60.5), (0.0, 8.0), self.rsu, self.bore, (4.73, 1.88),
+                            P0=np.diag([0.3, 0.3, 0.2, 0.2])).report()
+        for x in fe.plan_frame([tr, near], self.grants):
+            self._check_diag(x)
+        m = fe.plan_multi(tr, self.grants, self.rcs, max_grants=3, objective="coverage")
+        self._check_diag(m)
+        # a larger inflation can only lower the worst-case coverage of the same beam
+        wide = BeamFrontEnd(site=self.site, coverage_k=3.0)
+        pred = fe.prediction(tr, 0.4)
+        c1 = fe.coverage_beams(d.weights, fe.coverage_points(pred))[0][0]
+        c3 = wide.coverage_beams(d.weights, wide.coverage_points(pred))[0][0]
+        self.assertAlmostEqual(c1, d.coverage_db, places=9)
+        self.assertLessEqual(c3, c1 + 1e-12)
+
+    def test_coverage_objective_maximises_coverage(self):
+        tr = self.trk.report()
+        fe = BeamFrontEnd(site=self.site)
+        tab = fe.plan(tr, self.grants, self.rcs, return_table=True).candidates
+        d = fe.plan(tr, self.grants, self.rcs, objective="coverage")
+        self.assertEqual(d.info["objective"], "coverage")
+        ok = np.round(tab["pd"], 12) >= fe.tau
+        pred = fe.prediction(tr, 0.4)
+        cov = fe.coverage_beams(tab["weights"][ok], fe.coverage_points(pred))[0]
+        self.assertAlmostEqual(d.coverage_db, float(cov.max()), places=9)
+        self.assertGreaterEqual(d.pd_pred, fe.tau)
+        base = fe.plan(tr, self.grants, self.rcs)
+        self.assertGreaterEqual(d.coverage_db, base.coverage_db - 1e-9)
+
+    def test_quality_objective_with_min_coverage(self):
+        from isac.interfaces import SensingRequirement
+
+        tr = self.trk.report()
+        fe = BeamFrontEnd(site=self.site, on_unmet="reuse_pd")
+        cov_best = fe.plan(tr, self.grants, self.rcs, objective="coverage").coverage_db
+        req = SensingRequirement(min_coverage_db=cov_best - 1.0)
+        d = fe.plan(tr, self.grants, self.rcs, requirement=req, objective="quality")
+        self.assertEqual(d.mode, "reuse")
+        self.assertTrue(d.requirement_met)
+        self.assertGreaterEqual(d.coverage_db, req.min_coverage_db - 1e-9)
+        self.assertIn("min_coverage_db", d.info["binding"])
+        free = fe.plan(tr, self.grants, self.rcs, objective="quality")
+        self.assertGreaterEqual(free.exp_detected_cells, d.exp_detected_cells - 1e-9)
+        # the default objective also honours min_coverage_db as a requirement
+        dp = fe.plan(tr, self.grants, self.rcs, requirement=req)
+        if dp.requirement_met:
+            self.assertGreaterEqual(dp.coverage_db, req.min_coverage_db - 1e-9)
+
+    def test_multi_grant_coverage_growth(self):
+        tr = self.trk.report()
+        fe = BeamFrontEnd(site=self.site)
+        single = fe.plan(tr, self.grants, self.rcs, objective="coverage")
+        m = fe.plan_multi(tr, self.grants, self.rcs, max_grants=3, objective="coverage")
+        self.assertTrue(np.all(np.diff(m.info["steps_score"]) > 0))
+        self.assertGreaterEqual(m.coverage_db, single.coverage_db - 1e-6)
+        if m.mode == "reuse_multi":
+            self.assertIn("coverage_maxpool_db", m.info)
+            self.assertGreaterEqual(m.info["coverage_maxpool_db"], m.coverage_db - 1e-9)
+
+    def test_covering_dedicated_width_and_extent_prior(self):
+        from isac.site import young_track_extent
+
+        tr = self.trk.report()
+        plain = BeamFrontEnd(site=self.site).dedicated(tr, [], self.rcs, t=0.4)
+        cov = BeamFrontEnd(site=self.site, dedicated_covering=True, coverage_k=2.0)
+        d = cov.dedicated(tr, [], self.rcs, t=0.4)
+        self.assertIn(d.info["dedicated_width"], (32, 16, 8, 4))
+        self.assertEqual(d.tag, -100 - d.info["dedicated_width"])
+        pred = cov.prediction(tr, 0.4)
+        full = np.exp(-1j * np.pi * V.N_IDX * V.to_polar(pred["x"][None, :2], self.rsu, self.bore,
+                                                          V.P["rsu_h"], V.P["rc_h"])[0][0])
+        full /= math.sqrt(V.M)
+        self.assertGreaterEqual(d.coverage_gain_dbi,
+                                cov.coverage_beams(full, cov.coverage_points(pred))[1][0] - 1e-9)
+        self.assertTrue(np.all(np.isfinite([plain.coverage_db, d.coverage_db])))
+        young = TrackReport(0, 0.0, tr.x, tr.P, (3.0, 1.5), "car", hits=1)
+        fe = BeamFrontEnd(site=self.site, extent_prior=young_track_extent())
+        self.assertEqual(fe.prediction(young, 0.4)["extent"], (4.5, 1.9))
+        old = TrackReport(0, 0.0, tr.x, tr.P, (3.0, 1.5), "car", hits=7)
+        self.assertEqual(fe.prediction(old, 0.4)["extent"], (3.0, 1.5))
+
+
 if __name__ == "__main__":
     unittest.main()

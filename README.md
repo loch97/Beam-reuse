@@ -205,6 +205,37 @@ At offset 0 it equals `pd_pred` exactly. Fit RT detections to this curve directl
 
 **Q3 — not done yet.** A P_D model for per-part detection with pooled points is not implemented. The local plan of keeping multi-grant out of the main experiment and calibrating it through Q1 is the safer route for now.
 
+#### Fourth-round integration notes (coverage-aware selection, opt-in)
+
+All additive and off by default. Single-grant default decisions were compared with `d786264` on 72 fixed scenarios and are identical.
+
+**Diagnostics on every decision** (reuse, dedicated, multi-grant, shared):
+- `coverage_db`: the worst-case gain over the predicted box inflated by `coverage_k`·σ (default 1, along each body axis), relative to the beam's own peak.
+- `coverage_gain_dbi`: the absolute worst-case gain, M·G plus the element gain.
+- `exp_detected_cells`: the expected number of scatterer cells crossing the threshold, averaged over pose and RCS, with mean UE leakage. No quality SNR is needed.
+
+For multi-grant looks the coverage is pooled by energy: Σ n_re·G / Σ n_re·peak at each point, then the worst point. `info["coverage_maxpool_db"]` gives the per-point maximum of G_i/peak_i instead. Helpers: `coverage_points`, `coverage_beams`, `detected_cells`.
+
+**Objectives** for `plan(..., objective=)`, `plan_multi(..., objective=)`, `plan_frame(..., objective=)` and `BeamFrontEnd(objective=)`:
+
+| Objective | Selects | Note |
+|---|---|---|
+| `"pd"` (default) | Unchanged | — |
+| `"coverage"` | Among reuses with P_D ≥ τ that meet the requirement, the largest `coverage_db` | — |
+| `"quality"` | The largest `exp_detected_cells` | Combine with the new `SensingRequirement.min_coverage_db`, which also acts as a requirement under `"pd"` |
+
+Differences below 0.01 dB or 0.01 cells count as ties and are settled by cost. Detected cells saturate, so without this a 0.001-cell gain could buy an expensive beam. These objectives do not minimise communication cost; it is reported. `info` gives `objective`, `binding` (which of "tau", "min_coverage_db" or "requirement" removed candidates), `n_admissible`, `n_tau` and `n_feasible`. `plan_multi` with these objectives grows sets on pooled coverage or detected cells, so grants whose beams cover different parts of the box can be combined. Its `info["steps_score"]` traces the score.
+
+In the test scene (car at 62 m, σ ≈ 0.9 m):
+- `"coverage"` raised `coverage_db` from −2.8 to −1.1 dB.
+- That cost 14 dB of strongest-cell SNR and lowered the expected detected cells from 4.99 to 4.24.
+
+So within one grant, flatter coverage spreads the energy, consistent with the point-count finding.
+
+**Dedicated width.** `BeamFrontEnd(dedicated_covering=True)` makes the dedicated beam choose among centred sub-arrays of width M, M/2, M/4 and M/8 (at least 4 elements), steered at the predicted centre. It keeps the width with the largest absolute worst-case gain over the inflated box: `tag = -100 - width`, `info["dedicated_width"]`.
+
+**Extent prior.** `BeamFrontEnd(extent_prior=f)` plans with `f(track)` instead of `track.extent`. `site.young_track_extent(min_extent=(4.5, 1.9), min_hits=3, class_extents=None)` gives tracks with fewer than `min_hits` hits (the new `TrackReport.hits`; unknown counts as young) at least that box, or at least their class box.
+
 ### Extended target in the paper pipeline and RT check
 
 `python -m isac.simulate --target-model extended` runs the paper conditions with the multi-scatterer box in place of the point detector (`target.ExtendedDetector`), paired by seed block with the point model, and writes to `outputs/simulation_extended/`. The paper's effective RCS prior is kept: the dominant scatterer is lowered by the box's own contribution at the full-band reference cell (0–1.3 dB per frame), so the two models agree at that cell.

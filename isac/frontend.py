@@ -83,6 +83,12 @@ def _in_site(fn):
 
 
 PD_OFFSETS_DB = np.arange(-20.0, 20.01, 1.0)
+OBJECTIVES = ("pd", "coverage", "quality")
+# Score resolution of the objectives: differences below it are ties, settled by cost. Detected
+# cells saturate at the number of scatterers, so without this a 0.001-cell gain could buy an
+# expensive beam.
+OBJECTIVE_RESOLUTION = {"coverage": 0.01, "quality": 0.01}
+PEAK_U = np.linspace(-1.0, 1.0, 4097)
 
 
 def curve_sigma():
@@ -95,9 +101,14 @@ class BeamFrontEnd:
 
     def __init__(self, rsu=None, bore=None, target_model="extended", tau=0.9, levels=SEQUENTIAL,
                  ue_vehicle_rcs_dbsm=0.0, rcs_mode=None, lazy=True, site=None,
-                 on_unmet="dedicated", evidence_cell="scatterer"):
+                 on_unmet="dedicated", evidence_cell="scatterer", objective="pd", coverage_k=1.0,
+                 dedicated_covering=False, extent_prior=None):
         if target_model not in ("extended", "point"):
             raise ValueError(target_model)
+        if objective not in OBJECTIVES:
+            raise ValueError(objective)
+        self.objective, self.coverage_k = objective, float(coverage_k)
+        self.dedicated_covering, self.extent_prior = bool(dedicated_covering), extent_prior
         self.site, self._depth = site, 0
         if on_unmet not in ("dedicated", "reuse_pd", "best_quality"):
             raise ValueError(on_unmet)
@@ -142,7 +153,7 @@ class BeamFrontEnd:
             h, sh = track.heading, track.heading_std or 0.0
         else:
             h, sh = heading_of(x, P)
-        extent, degenerate = track.extent, False
+        extent, degenerate = self.track_extent(track), False
         if extent is not None:
             keys, xy, _, dom, _ = box_scatterers(x[:2], h, *extent, self.rsu, 0.0)
             if dom is None:
@@ -300,6 +311,90 @@ class BeamFrontEnd:
                     for s, wk in zip(sigma, weights))
         return snr, cells
 
+    def track_extent(self, track):
+        """Box extent used for a track: ``extent_prior(track)`` when set, else ``track.extent``."""
+        return self.extent_prior(track) if self.extent_prior is not None else track.extent
+
+    def coverage_points(self, pred, k=None):
+        """Directions (u, elevation) of the predicted box inflated by k sigma.
+
+        The box (or a point when there is no extent) is grown by k times the position standard
+        deviation along each body axis; its outline (9 points per side) and centre are sampled.
+        """
+        k = self.coverage_k if k is None else float(k)
+        x, P, h = pred["x"], pred["P"], pred["heading"]
+        e1 = np.array([math.cos(h), math.sin(h)])
+        e2 = np.array([-math.sin(h), math.cos(h)])
+        s1 = math.sqrt(max(float(e1 @ P[:2, :2] @ e1), 0.0))
+        s2 = math.sqrt(max(float(e2 @ P[:2, :2] @ e2), 0.0))
+        L, Wd = pred["extent"] if pred["extent"] is not None else (0.0, 0.0)
+        a, b = L / 2 + k * s1, Wd / 2 + k * s2
+        t = np.linspace(-1.0, 1.0, 9)
+        local = np.concatenate([np.c_[np.full(9, a), t * b], np.c_[np.full(9, -a), t * b],
+                                np.c_[t * a, np.full(9, b)], np.c_[t * a, np.full(9, -b)],
+                                np.zeros((1, 2))])
+        xy = x[:2] + local[:, :1] * e1 + local[:, 1:] * e2
+        u, _, th, _ = V.to_polar(xy, self.rsu, self.bore, V.P["rsu_h"], V.P["rc_h"])
+        return u, th
+
+    def coverage_beams(self, W, pts):
+        """Per beam: (worst-case gain over the points relative to the beam's peak in dB,
+        absolute worst-case gain in dBi = array gain M*G plus element gain)."""
+        W = np.atleast_2d(W)
+        u, th = pts
+        G = array_gain(W, u)
+        peak = array_gain(W, PEAK_U).max(axis=1)
+        cov = 10 * np.log10(np.maximum(G.min(axis=1) / peak, 1e-30))
+        dbi = 10 * np.log10(np.maximum(V.M * G, 1e-30)) + V.elem_dbi(np.arcsin(np.clip(u, -1, 1)), th)
+        return cov, dbi.min(axis=1)
+
+    def _cell_terms(self, W, pred, n_re, bw, clutter, rho=None):
+        """Cell SNRs, mean UE leakage and nodes of beams W for the detected-cell count."""
+        nodes = pred["nodes"] if "nodes" in pred else self._evidence_nodes(pred)
+        W = np.atleast_2d(W)
+        rho = cell_snr(W, nodes, n_re, bw) if rho is None else rho
+        return rho, self._mean_leak(W, nodes, n_re, bw, clutter), nodes
+
+    @staticmethod
+    def detected_cells(rho, leak, nodes, sigma, weights):
+        """Expected number of scatterer cells crossing the threshold, per beam: sum over cells of
+        the per-cell crossing probability, averaged over pose and RCS (and calibration) nodes,
+        with the mean UE leakage."""
+        lp = math.log(V.P["pfa"])
+        sinr = rho / (1 + leak)
+        return sum(w * (np.exp(lp / (1 + x * sinr)).sum(axis=2) @ nodes.w)
+                   for x, w in zip(10 ** (np.asarray(sigma) / 10), weights))
+
+    def _annotate(self, d, pred, parts, bw, sigma, weights):
+        """Fill coverage_db, coverage_gain_dbi and exp_detected_cells of a decision.
+
+        ``parts`` = [(W, n_re, clutter)]. Several parts pool by energy: per point,
+        sum_i n_re_i G_i / sum_i n_re_i peak_i (coverage_db) and the n_re-weighted mean gain
+        (coverage_gain_dbi); ``info["coverage_maxpool_db"]`` gives the per-point maximum of
+        G_i / peak_i instead.
+        """
+        pts = self.coverage_points(pred)
+        u, th = pts
+        n = np.array([p[1] for p in parts], float)
+        G = np.array([array_gain(np.atleast_2d(p[0]), u)[0] for p in parts])
+        peak = np.array([array_gain(np.atleast_2d(p[0]), PEAK_U)[0].max() for p in parts])
+        pooled = (n @ G) / (n @ peak)
+        d.coverage_db = float(10 * np.log10(max(pooled.min(), 1e-30)))
+        elem = V.elem_dbi(np.arcsin(np.clip(u, -1, 1)), th)
+        d.coverage_gain_dbi = float((10 * np.log10(np.maximum(V.M * (n @ G) / n.sum(), 1e-30))
+                                     + elem).min())
+        rho = leak = 0.0
+        for W, n_re, cl in parts:
+            r_, l_, nodes = self._cell_terms(W, pred, n_re, bw, cl)
+            rho, leak = rho + r_, leak + l_
+        d.exp_detected_cells = float(self.detected_cells(rho, leak, nodes, sigma, weights)[0])
+        d.info["coverage_k"] = self.coverage_k
+        if len(parts) > 1:
+            d.info["coverage_pooling"] = "energy: sum n_re*G / sum n_re*peak per point"
+            d.info["coverage_maxpool_db"] = float(10 * np.log10(max(
+                (G / peak[:, None]).max(axis=0).min(), 1e-30)))
+        return d
+
     def offset_curve(self, W, pred, n_re, bandwidth, clutter, sigma, weights, offsets=None):
         """Decision-event P_D of one beam versus an SNR offset added to every target return.
 
@@ -313,10 +408,12 @@ class BeamFrontEnd:
         return offsets.copy(), np.asarray(weights) @ pd.reshape(len(sigma), len(offsets))
 
     @staticmethod
-    def meets(req, snr, cells):
+    def meets(req, snr, cells, cov=None):
         if req is None or not req.active():
             return True
         ok = True
+        if req.min_coverage_db is not None:
+            ok &= cov is not None and bool(cov >= req.min_coverage_db)
         if req.min_cell_snr_db is not None:
             ok &= snr >= req.min_cell_snr_db
         if req.min_cells is not None and req.quality_snr_db is not None:
@@ -385,7 +482,8 @@ class BeamFrontEnd:
         return dict(W=W, tag=tag, loss=loss, ok=ok, pd=np.full(len(W), np.nan), dse=m0[2] - se,
                     n_re=g.n_prb * 12 * g.n_sym, bw=self.resolution_bw(grant_bw),
                     grant_bw=grant_bw, mcs=mcs, clutter=self.clutter(g),
-                    q_snr=np.full(len(W), np.nan), q_cells=np.full(len(W), np.nan), rho={})
+                    q_snr=np.full(len(W), np.nan), q_cells=np.full(len(W), np.nan), rho={},
+                    q_cov=np.full(len(W), np.nan), q_det=np.full(len(W), np.nan))
 
     def _rho(self, e, pred, cs):
         """Box cell SNRs of candidates ``cs``, computed once per (grant, candidate) and cached."""
@@ -407,6 +505,19 @@ class BeamFrontEnd:
             rho = self._rho(e, pred, cs) if "nodes" in pred else None
             e["q_snr"][cs], e["q_cells"][cs] = self.quality(
                 e["W"][cs], pred, e["n_re"], e["bw"], e["clutter"], sigma, weights, s_q, rho=rho)
+            e["q_cov"][cs] = self.coverage_beams(e["W"][cs], self.coverage_points(pred))[0]
+
+    def _fill_detected(self, rows, pairs, sigma, weights):
+        todo = {}
+        for i, c in pairs:
+            if np.isnan(rows[i][3]["q_det"][c]):
+                todo.setdefault(i, []).append(c)
+        for i, cs in todo.items():
+            _, _, pred, e = rows[i]
+            cs = np.array(sorted(cs))
+            rho = self._rho(e, pred, cs) if "nodes" in pred else None
+            r_, l_, nodes = self._cell_terms(e["W"][cs], pred, e["n_re"], e["bw"], e["clutter"], rho)
+            e["q_det"][cs] = self.detected_cells(r_, l_, nodes, sigma, weights)
 
     def _fill_pd(self, rows, pairs, sigma, weights):
         """Evaluate predicted P_D for the (row, candidate) pairs that have none yet.
@@ -439,7 +550,7 @@ class BeamFrontEnd:
     # -- decision -----------------------------------------------------------------------------
     @_in_site
     def plan(self, track, grants, rcs=None, t=None, requirement=None, return_table=False,
-             on_unmet=None):
+             on_unmet=None, objective=None):
         """BeamDecision for one sensing opportunity from a TrackReport, GrantReports and RcsReport.
 
         ``rcs`` defaults to the site's (or the paper's) design RCS. ``requirement`` overrides
@@ -453,7 +564,21 @@ class BeamFrontEnd:
         - "best_quality": among reuses with P_D >= tau, the largest ``pred_cell_snr_db``.
         All within the same search; ``info["fallback"]`` names the path taken ("none" when the
         requirement was met or absent).
+
+        ``objective`` (default: the front end's, "pd") selects among feasible reuses (P_D >= tau
+        and the requirement, over all stages at once):
+        - "pd": cheapest, then highest P_D (the paper's sequential policy, unchanged);
+        - "coverage": largest ``coverage_db`` (worst-case gain over the box inflated by
+          ``coverage_k`` sigma, relative to the beam peak), then cheapest;
+        - "quality": largest ``exp_detected_cells``, then cheapest; combine with
+          ``SensingRequirement.min_coverage_db`` for "cells subject to coverage".
+        These two do not minimise communication cost (it is reported); score differences below
+        ``OBJECTIVE_RESOLUTION`` (0.01 dB, 0.01 cells) are ties settled by cost. ``info["binding"]`` lists
+        the constraints that removed candidates ("tau", "min_coverage_db", "requirement").
         """
+        objective = self.objective if objective is None else objective
+        if objective not in OBJECTIVES:
+            raise ValueError(objective)
         on_unmet = self.on_unmet if on_unmet is None else on_unmet
         if on_unmet not in ("dedicated", "reuse_pd", "best_quality"):
             raise ValueError(on_unmet)
@@ -480,6 +605,47 @@ class BeamFrontEnd:
         def order(ic):
             return (-pdq(ic), rows[ic[0]][3]["loss"][ic[1]], ic[0], ic[1])
 
+        if objective != "pd":
+            tags = [t_ for st in self.stages for t_ in st]
+            staged = [(i, c) for i, c in admissible if np.isin(rows[i][3]["tag"][c], tags)]
+            n_eval += self._fill_pd(rows, staged, sigma, weights)
+            tau_ok = [ic for ic in staged if pdq(ic) >= self.tau]
+            self._fill_quality(rows, tau_ok, sigma, weights, s_q)
+            self._fill_detected(rows, tau_ok, sigma, weights)
+
+            def ev(ic):
+                return rows[ic[0]][3]
+
+            cov_fail = [ic for ic in tau_ok if req is not None and req.min_coverage_db is not None
+                        and not ev(ic)["q_cov"][ic[1]] >= req.min_coverage_db]
+            feas = [ic for ic in tau_ok if self.meets(req, ev(ic)["q_snr"][ic[1]],
+                                                      ev(ic)["q_cells"][ic[1]],
+                                                      ev(ic)["q_cov"][ic[1]])]
+            other_fail = [ic for ic in tau_ok if ic not in feas and ic not in cov_fail]
+            binding = (["tau"] if len(tau_ok) < len(staged) else []) + (
+                ["min_coverage_db"] if cov_fail else []) + (["requirement"] if other_fail else [])
+            stats = dict(objective=objective, binding=binding, n_admissible=len(staged),
+                         n_tau=len(tau_ok), n_feasible=len(feas))
+            if feas:
+                col = "q_cov" if objective == "coverage" else "q_det"
+                res_ = OBJECTIVE_RESOLUTION[objective]
+                i, c = min(feas, key=lambda ic: (-round(ev(ic)[col][ic[1]] / res_),
+                                                 ev(ic)["n_re"] * ev(ic)["dse"][ic[1]],
+                                                 -pdq(ic), ev(ic)["loss"][ic[1]], ic[0], ic[1]))
+                e = ev((i, c))
+                stage = next(st for st in self.stages if e["tag"][c] in st)
+                d = self._reuse(rows, i, c, e["n_re"] * e["dse"][c], stage, rcs, sigma, weights,
+                                req, s_q, n_cand, n_eval,
+                                rows_table=admissible if return_table else None,
+                                met=None if req is None else True, fallback="none")
+                d.info.update(stats)
+                return d
+            d = self.plan(track, grants, rcs, t, requirement=req, return_table=return_table,
+                          on_unmet=on_unmet, objective="pd")
+            d.info.update(stats)
+            d.info["objective_fallback"] = "no candidate met tau and the requirement"
+            return d
+
         first_pd = None  # cheapest P_D-feasible reuse, for on_unmet="reuse_pd"
         for stage in self.stages:
             pool = {}
@@ -496,7 +662,8 @@ class BeamFrontEnd:
                     self._fill_quality(rows, feasible, sigma, weights, s_q)
                     feasible = [ic for ic in feasible
                                 if self.meets(req, rows[ic[0]][3]["q_snr"][ic[1]],
-                                              rows[ic[0]][3]["q_cells"][ic[1]])]
+                                              rows[ic[0]][3]["q_cells"][ic[1]],
+                                              rows[ic[0]][3]["q_cov"][ic[1]])]
                 if feasible:
                     i, c = min(feasible, key=order)
                     return self._reuse(rows, i, c, cost, stage, rcs, sigma, weights, req, s_q,
@@ -521,7 +688,7 @@ class BeamFrontEnd:
             return self._reuse(rows, i, c, e["n_re"] * e["dse"][c], stage, rcs, sigma, weights,
                                req, s_q, n_cand, n_eval,
                                rows_table=admissible if return_table else None,
-                               met=self.meets(req, e["q_snr"][c], e["q_cells"][c]),
+                               met=self.meets(req, e["q_snr"][c], e["q_cells"][c], e["q_cov"][c]),
                                fallback="best_quality")
         d = self.dedicated(track, grants, rcs, t, n_cand, n_eval, requirement=req)
         d.info["fallback"] = "dedicated" if req is not None else "none"
@@ -536,7 +703,7 @@ class BeamFrontEnd:
         grid, curve = self.evidence_curve(W, pred, e["n_re"], e["bw"], e["clutter"])
         snr = float(e["q_snr"][c])
         offset_curve = self.offset_curve(W, pred, e["n_re"], e["bw"], e["clutter"], sigma, weights)
-        return BeamDecision(
+        d = BeamDecision(
             "reuse",
             g.t,
             grant=i,
@@ -567,10 +734,12 @@ class BeamFrontEnd:
             pd_offset_curve=offset_curve,
             **self._pred_fields(pred),
         )
+        return self._annotate(d, pred, [(W, e["n_re"], e["clutter"])], e["bw"], sigma, weights)
 
     # -- frame-level planning for several tracks ------------------------------------------------
     @_in_site
-    def plan_frame(self, tracks, grants, rcs=None, t=None, requirements=None, on_unmet=None):
+    def plan_frame(self, tracks, grants, rcs=None, t=None, requirements=None, on_unmet=None,
+                   objective=None):
         """Grant assignment for several tracks in one frame (greedy, in the given order).
 
         A grant carries one executed beam. Track k first checks the grants already taken by
@@ -601,7 +770,8 @@ class BeamFrontEnd:
                 pd = float(self.detect(W, pred, e["n_re"], e["bw"], e["clutter"], sigma, weights)[0])
                 snr, cells = self.quality(W, pred, e["n_re"], e["bw"], e["clutter"], sigma,
                                           weights, req.quality_snr_db if req is not None else None)
-                if round(pd, PD_DECIMALS) >= self.tau and self.meets(req, snr[0], cells[0]):
+                cov = self.coverage_beams(W, self.coverage_points(pred))[0][0]
+                if round(pd, PD_DECIMALS) >= self.tau and self.meets(req, snr[0], cells[0], cov):
                     if share is None or pd > share[0]:
                         share = (pd, gi, owner, dprev, pred, e, float(snr[0]), float(cells[0]))
             if share is not None:
@@ -624,10 +794,13 @@ class BeamFrontEnd:
                                                       e["clutter"], sigma, weights),
                     **self._pred_fields(pred))
                 d.parts = [self._single_part(d)]
+                self._annotate(d, pred, [(dprev.weights, e["n_re"], e["clutter"])], e["bw"],
+                               sigma, weights)
                 out.append(d)
                 continue
             free = [i for i in range(len(grants)) if i not in taken]
-            d = self.plan(tr, [grants[i] for i in free], r_k, t, requirement=req, on_unmet=on_unmet)
+            d = self.plan(tr, [grants[i] for i in free], r_k, t, requirement=req, on_unmet=on_unmet,
+                          objective=objective)
             if d.grant is not None:
                 d.grant = free[d.grant]
             if d.mode == "reuse":
@@ -671,7 +844,7 @@ class BeamFrontEnd:
 
     @_in_site
     def plan_multi(self, track, grants, rcs=None, t=None, requirement=None, max_grants=3,
-                   on_unmet=None, cost_eps_bits=1.0):
+                   on_unmet=None, cost_eps_bits=1.0, objective=None):
         """One sensing look over up to ``max_grants`` grants of the frame (multi-grant).
 
         Each selected grant illuminates the target with its own candidate beam on its own REs,
@@ -693,6 +866,11 @@ class BeamFrontEnd:
         is returned; with none, the highest-SNR set, which is never worse than the best single
         grant. ``info["steps_snr_db"]`` gives the combined SNR after each addition.
         ``cost_eps_bits`` is kept for compatibility and no longer used.
+        ``objective`` "coverage" / "quality" grow sets that maximise pooled coverage
+        (sum n_re*G / sum n_re*peak per point, worst point) or expected detected cells, so grants
+        whose beams cover different parts of the inflated box can be combined; the
+        best-scoring feasible set is returned (cost is a tie-break, not minimised).
+        ``info["steps_score"]`` traces the objective score.
         If no set within ``max_grants`` is feasible, ``on_unmet`` decides: "dedicated" (dedicated
         beam), "reuse_pd" (single-grant cheapest P_D-feasible reuse), "best_quality" (the
         greedy set, flagged unmet).
@@ -703,19 +881,24 @@ class BeamFrontEnd:
         (grant, ue_id, tag, weights, n_re, bandwidth, loss_db, mcs, dse, cost_bits); ``weights``
         and ``grant`` are None for a multi-grant look. A one-grant result has ``mode="reuse"``.
         """
+        objective = self.objective if objective is None else objective
+        if objective not in OBJECTIVES:
+            raise ValueError(objective)
         on_unmet = self.on_unmet if on_unmet is None else on_unmet
         rcs = self.default_rcs() if rcs is None else rcs
         req = requirement if requirement is not None else getattr(track, "requirement", None)
         req = req if req is not None and req.active() else None
-        single = self.plan(track, grants, rcs, t, requirement=req, on_unmet="dedicated")
-        met = single.mode == "reuse" and (req is None or single.requirement_met)
-        if met or max_grants <= 1 or len(grants) <= 1:
-            d = single if met else self.plan(track, grants, rcs, t, requirement=req,
-                                             on_unmet=on_unmet)
-            d.info["multi"] = False
-            if d.mode == "reuse":
-                d.parts = [self._single_part(d)]
-            return d
+        if objective == "pd" or max_grants <= 1 or len(grants) <= 1:
+            single = self.plan(track, grants, rcs, t, requirement=req, on_unmet="dedicated",
+                               objective=objective)
+            met = single.mode == "reuse" and (req is None or single.requirement_met)
+            if met or max_grants <= 1 or len(grants) <= 1:
+                d = single if met else self.plan(track, grants, rcs, t, requirement=req,
+                                                 on_unmet=on_unmet, objective=objective)
+                d.info["multi"] = False
+                if d.mode == "reuse":
+                    d.parts = [self._single_part(d)]
+                return d
         s_q = req.quality_snr_db if req is not None else None
         sigma, weights = self.rcs_nodes(rcs)
         t0 = grants[0].t if t is None else t
@@ -723,6 +906,7 @@ class BeamFrontEnd:
         nodes = pred["nodes"] if "nodes" in pred else self._evidence_nodes(pred)
         res = self.site.sensing_bandwidth_hz if self.site is not None else None
         bw = res if res is not None else float(sum(g.n_prb * 12 * V.P["df"] for g in grants))
+        pts = self.coverage_points(pred)
         pool = []
         stage_tags = sorted(set().union(*self.stages))
         for i, g in enumerate(grants):
@@ -731,43 +915,75 @@ class BeamFrontEnd:
             if not cs.size:
                 continue
             W = e["W"][cs]
-            pool.append(dict(i=i, g=g, e=e, cs=cs, cost=e["n_re"] * e["dse"][cs],
+            pool.append(dict(i=i, g=g, e=e, cs=cs, cost=e["n_re"] * e["dse"][cs], n=e["n_re"],
                              rho=cell_snr(W, nodes, e["n_re"], bw),
-                             leak=self._mean_leak(W, nodes, e["n_re"], bw, e["clutter"])))
-        def ok(pd, snr, cells):
-            return np.array([round(float(p), PD_DECIMALS) >= self.tau and self.meets(req, s, c)
-                             for p, s, c in zip(pd, snr, cells)])
+                             leak=self._mean_leak(W, nodes, e["n_re"], bw, e["clutter"]),
+                             G=array_gain(W, pts[0]), peak=array_gain(W, PEAK_U).max(axis=1)))
+
+        def metrics(rho, leak, gsum, psum):
+            """P_D, strongest-cell SNR, quality cells, pooled coverage (dB), detected cells."""
+            pd, snr, cells = self._combined(rho, leak, nodes, sigma, weights, s_q)
+            cov = 10 * np.log10(np.maximum((gsum / psum[:, None]).min(axis=1), 1e-30))
+            det = self.detected_cells(rho, leak, nodes, sigma, weights)
+            return pd, snr, cells, cov, det
+
+        def ok(pd, snr, cells, cov):
+            return np.array([round(float(p), PD_DECIMALS) >= self.tau and self.meets(req, s, c, v)
+                             for p, s, c, v in zip(pd, snr, cells, cov)])
+
+        def score(snr, cov, det):
+            return {"pd": snr, "coverage": cov, "quality": det}[objective]
 
         def cost_of(chosen):
             return float(sum(pool[a]["cost"][b] for a, b in chosen))
 
+        def sums(chosen):
+            rho = sum(pool[a]["rho"][b] for a, b in chosen)
+            leak = sum(pool[a]["leak"][b] for a, b in chosen)
+            gsum = sum(pool[a]["n"] * pool[a]["G"][b] for a, b in chosen)
+            psum = sum(pool[a]["n"] * pool[a]["peak"][b] for a, b in chosen)
+            return rho, leak, gsum, psum
+
         def evaluate(chosen):
-            r_ = sum(pool[a]["rho"][b] for a, b in chosen)
-            l_ = sum(pool[a]["leak"][b] for a, b in chosen)
-            pd, snr, cells = self._combined(r_[None], l_[None], nodes, sigma, weights, s_q)
-            return float(pd[0]), float(snr[0]), float(cells[0]), bool(ok(pd, snr, cells)[0])
+            rho, leak, gsum, psum = sums(chosen)
+            pd, snr, cells, cov, det = metrics(rho[None], leak[None], np.atleast_2d(gsum),
+                                               np.atleast_1d(psum))
+            f = bool(ok(pd, snr, cells, cov)[0])
+            return float(pd[0]), float(snr[0]), float(score(snr, cov, det)[0]), f
 
         def grow(seed):
-            """Greedy growth from one part. A grant is added only if the combined strongest-cell
-            SNR strictly rises and P_D does not fall. A feasible addition wins at least total
-            cost; otherwise zero-cost candidates rank by SNR gain, costed ones by gain per bit."""
+            """Greedy growth from one part. A grant is added only if the objective score
+            (strongest-cell SNR for "pd", pooled coverage for "coverage", detected cells for
+            "quality") strictly rises and P_D does not fall. For "pd" a feasible addition wins
+            at least total cost and growth stops when feasible; otherwise zero-cost candidates
+            rank by score gain, costed ones by gain per bit. The other objectives keep adding
+            the largest score gain (cheaper first on ties) up to ``max_grants``."""
             chosen = [seed]
-            pd0, snr0, _, feas = evaluate(chosen)
-            steps = [snr0]
-            rho = pool[seed[0]]["rho"][seed[1]].copy()
-            leak = pool[seed[0]]["leak"][seed[1]].copy()
-            while not feas and len(chosen) < max_grants:
+            pd0, snr0, sc0, feas = evaluate(chosen)
+            steps, steps_score = [snr0], [sc0]
+            while len(chosen) < max_grants and not (feas and objective == "pd"):
                 used = {k for k, _ in chosen}
-                best_feas, best_free, best_cost = None, None, None
+                rho, leak, gsum, psum = sums(chosen)
+                best_feas, best_free, best_cost, best_any = None, None, None, None
                 for k, P in enumerate(pool):
                     if k in used:
                         continue
-                    pd, snr, cells = self._combined(rho[None] + P["rho"], leak[None] + P["leak"],
-                                                    nodes, sigma, weights, s_q)
-                    gain = snr - snr0
-                    better = (gain > 1e-9) & (np.round(pd, PD_DECIMALS) >= round(pd0, PD_DECIMALS))
+                    pd, snr, cells, cov, det = metrics(
+                        rho[None] + P["rho"], leak[None] + P["leak"], gsum[None] + P["n"] * P["G"],
+                        psum + P["n"] * P["peak"])
+                    sc = score(snr, cov, det)
+                    gain = sc - sc0
+                    min_gain = 1e-9 if objective == "pd" else OBJECTIVE_RESOLUTION[objective]
+                    better = (gain > min_gain) & (np.round(pd, PD_DECIMALS) >= round(pd0, PD_DECIMALS))
                     total = cost_of(chosen) + P["cost"]
-                    for jj in np.flatnonzero(better & ok(pd, snr, cells)):
+                    if objective != "pd":
+                        res_ = OBJECTIVE_RESOLUTION[objective]
+                        for jj in np.flatnonzero(better):
+                            key = (-round(gain[jj] / res_), total[jj], k, jj)
+                            if best_any is None or key < best_any[0]:
+                                best_any = (key, k, jj)
+                        continue
+                    for jj in np.flatnonzero(better & ok(pd, snr, cells, cov)):
                         key = (total[jj], -snr[jj], k, jj)
                         if best_feas is None or key < best_feas[0]:
                             best_feas = (key, k, jj)
@@ -782,45 +998,55 @@ class BeamFrontEnd:
                         jj = paid[np.argmax(ratio)]
                         if best_cost is None or ratio.max() > best_cost[0]:
                             best_cost = (ratio.max(), k, jj)
-                pick = best_feas or best_free or best_cost
+                pick = best_any if objective != "pd" else (best_feas or best_free or best_cost)
                 if pick is None:
                     break
                 _, k, jj = pick
                 chosen.append((k, jj))
-                rho, leak = rho + pool[k]["rho"][jj], leak + pool[k]["leak"][jj]
-                pd0, snr0, _, feas = evaluate(chosen)
+                pd0, snr0, sc0, feas = evaluate(chosen)
                 steps.append(snr0)
-            if feas and len(chosen) > 1:  # drop parts not needed, most expensive first
+                steps_score.append(sc0)
+            if objective == "pd" and feas and len(chosen) > 1:  # drop unneeded, expensive first
                 for kj in sorted(chosen, key=lambda kj: -pool[kj[0]]["cost"][kj[1]]):
                     rest = [x for x in chosen if x != kj]
                     if evaluate(rest)[3]:
                         chosen = rest
-            return chosen, steps
+            return chosen, steps, steps_score
 
         seeds = set()
         for k, P in enumerate(pool):
-            pd, snr, cells = self._combined(P["rho"], P["leak"], nodes, sigma, weights, s_q)
-            seeds.add((k, int(np.argmax(snr))))
+            pd, snr, cells, cov, det = metrics(P["rho"], P["leak"], P["n"] * P["G"],
+                                               P["n"] * P["peak"])
+            sc = score(snr, cov, det)
+            seeds.add((k, int(np.argmax(sc))))
             free = np.flatnonzero(P["cost"] == 0)
             if free.size:
-                seeds.add((k, int(free[np.argmax(snr[free])])))
-            f = np.flatnonzero(ok(pd, snr, cells))
+                seeds.add((k, int(free[np.argmax(sc[free])])))
+            f = np.flatnonzero(ok(pd, snr, cells, cov))
             if f.size:
-                seeds.add((k, int(f[np.lexsort((-snr[f], P["cost"][f]))[0]])))
+                seeds.add((k, int(f[np.lexsort((-sc[f], P["cost"][f]))[0]])))
         results = []
         for seed in sorted(seeds):
-            chosen, steps = grow(seed)
-            _, snr_c, _, feas = evaluate(chosen)
-            results.append((feas, cost_of(chosen), snr_c, chosen, steps))
+            chosen, steps, steps_score = grow(seed)
+            _, snr_c, sc_c, feas = evaluate(chosen)
+            results.append((feas, cost_of(chosen), sc_c, chosen, steps, steps_score))
         feasible_sets = [r for r in results if r[0]]
-        if feasible_sets:
-            feasible, _, _, chosen, steps = min(feasible_sets, key=lambda r: (r[1], -r[2], len(r[3])))
+        if feasible_sets and objective == "pd":
+            feasible, _, _, chosen, steps, steps_score = min(
+                feasible_sets, key=lambda r: (r[1], -r[2], len(r[3])))
+        elif feasible_sets:
+            res_ = OBJECTIVE_RESOLUTION[objective]
+            feasible, _, _, chosen, steps, steps_score = max(
+                feasible_sets, key=lambda r: (round(r[2] / res_), -r[1], -len(r[3])))
         elif results:
-            feasible, _, _, chosen, steps = max(results, key=lambda r: (r[2], -r[1], -len(r[3])))
+            res_ = OBJECTIVE_RESOLUTION.get(objective, 1e-9)
+            feasible, _, _, chosen, steps, steps_score = max(
+                results, key=lambda r: (round(r[2] / res_), -r[1], -len(r[3])))
         else:
-            feasible, chosen, steps = False, [], []
+            feasible, chosen, steps, steps_score = False, [], [], []
         if not chosen or (not feasible and on_unmet != "best_quality"):
-            d = self.plan(track, grants, rcs, t, requirement=req, on_unmet=on_unmet)
+            d = self.plan(track, grants, rcs, t, requirement=req, on_unmet=on_unmet,
+                          objective=objective)
             d.info["multi"] = False
             if d.mode == "reuse":
                 d.parts = [self._single_part(d)]
@@ -836,7 +1062,7 @@ class BeamFrontEnd:
         offset_pd = np.array([self._combined(xo * rho[None], leak[None], nodes, sigma, weights,
                                              None)[0][0] for xo in 10 ** (PD_OFFSETS_DB / 10)])
         multi = len(parts) > 1
-        return BeamDecision(
+        d = BeamDecision(
             "reuse_multi" if multi else "reuse",
             t0,
             grant=None if multi else parts[0]["grant"],
@@ -858,8 +1084,9 @@ class BeamFrontEnd:
             info=dict(multi=True, fallback="none" if feasible else "best_quality",
                       rcs_source=rcs.source, rcs_nodes=sigma.tolist(),
                       rcs_weights=weights.tolist(), degenerate_box=pred["degenerate_box"],
-                      leakage="mean over UE quadrature per grant",
-                      steps_snr_db=[float(x) for x in steps], seeds=len(seeds)),
+                      leakage="mean over UE quadrature per grant", objective=objective,
+                      steps_snr_db=[float(x) for x in steps],
+                      steps_score=[float(x) for x in steps_score], seeds=len(seeds)),
             pred_cell_snr_db=float(snr),
             exp_quality_cells=float(cells),
             requirement_met=None if req is None else bool(feasible),
@@ -869,6 +1096,9 @@ class BeamFrontEnd:
             pd_offset_curve=(PD_OFFSETS_DB.copy(), offset_pd),
             **self._pred_fields(pred),
         )
+        ann = [(pool[a]["e"]["W"][pool[a]["cs"][b]], pool[a]["n"], pool[a]["e"]["clutter"])
+               for a, b in chosen]
+        return self._annotate(d, pred, ann, bw, sigma, weights)
 
     @staticmethod
     def _single_part(d):
@@ -924,21 +1154,35 @@ class BeamFrontEnd:
         req = req if req is not None and req.active() else None
         sigma, weights = self.rcs_nodes(rcs)
         pred = self.prediction(track, t)
-        Wd = np.array([V.beam(pred["u_hat"]), V.beam(pred["u_hat"], V.P["q_wide"])])
         n_re, grant_bw = V.P["ded_prb"] * 12 * V.P["ded_sym"], V.P["ded_prb"] * 12 * V.P["df"]
         bw = self.resolution_bw(grant_bw)
+        width = None
+        if self.dedicated_covering:
+            # sub-array widths M, M/2, ... down to 4 elements, steered at the predicted centre;
+            # the width with the largest absolute worst-case gain over the inflated box wins
+            u_c = V.to_polar(pred["x"][None, :2], self.rsu, self.bore, V.P["rsu_h"],
+                             V.P["rc_h"])[0][0]
+            widths = [w_ for w_ in (V.M, V.M // 2, V.M // 4, V.M // 8) if w_ >= 4]
+            beams = np.array([np.exp(-1j * np.pi * V.N_IDX * u_c)
+                              * (np.abs(V.N_IDX) < w_ / 2) / math.sqrt(w_) for w_ in widths])
+            gain = self.coverage_beams(beams, self.coverage_points(pred))[1]
+            width = widths[int(np.argmax(gain))]
+            Wd = beams[[int(np.argmax(gain))]]
+        else:
+            Wd = np.array([V.beam(pred["u_hat"]), V.beam(pred["u_hat"], V.P["q_wide"])])
         pd = self.detect(Wd, pred, n_re, bw, None, sigma, weights)
         c = int(np.argmax(pd))
         grid, curve = self.evidence_curve(Wd[c], pred, n_re, bw, None)
         snr, cells = self.quality(Wd[c], pred, n_re, bw, None, sigma, weights,
                                   req.quality_snr_db if req is not None else None)
+        cov = self.coverage_beams(Wd[c], self.coverage_points(pred))[0][0]
         se_ref = (np.mean([next(m for m in V.MCS if m[0] == g.mcs)[2] for g in grants])
                   if grants else 0.0)
-        return BeamDecision(
+        d = BeamDecision(
             "dedicated",
             t,
             weights=Wd[c],
-            tag=-1 - c,
+            tag=-1 - c if width is None else -100 - width,
             pd_pred=float(pd[c]),
             pd_curve_sigma=grid,
             pd_curve=curve,
@@ -953,12 +1197,15 @@ class BeamFrontEnd:
                       degenerate_box=pred["degenerate_box"]),
             pred_cell_snr_db=float(snr[0]),
             exp_quality_cells=float(cells[0]),
-            requirement_met=None if req is None else self.meets(req, snr[0], cells[0]),
+            requirement_met=None if req is None else self.meets(req, snr[0], cells[0], cov),
             resolution_bw=float(bw),
             quality_prob=float(req.quality_prob(snr[0])) if req is not None else float("nan"),
             pd_offset_curve=self.offset_curve(Wd[c], pred, n_re, bw, None, sigma, weights),
             **self._pred_fields(pred),
         )
+        if width is not None:
+            d.info["dedicated_width"] = width
+        return self._annotate(d, pred, [(Wd[c], n_re, None)], bw, sigma, weights)
 
     # -- evidence for the RCS estimator -------------------------------------------------------
     @_in_site
@@ -979,16 +1226,17 @@ class BeamFrontEnd:
         look = RcsLook(d.t, bool(rep.rcs_detected), d.pd_curve_sigma, d.pd_curve)
         floor = float(rep.rcs_floor_db or 0.0) + self.snr_offset()
         bw = d.resolution_bw if np.isfinite(d.resolution_bw) else d.bandwidth
-        box = track.extent is not None
+        extent = self.track_extent(track)
+        box = extent is not None
         if box:
             h0 = track.heading if track.heading is not None else heading_of(track.x, track.P)[0]
-            box = box_scatterers(track.x[:2], h0, *track.extent, self.rsu, 0.0)[3] is not None
+            box = box_scatterers(track.x[:2], h0, *extent, self.rsu, 0.0)[3] is not None
         if box:
             if track.heading is not None:
                 h, sh = track.heading, track.heading_std or 0.0
             else:
                 h, sh = heading_of(track.x, track.P)
-            nodes = pose_nodes(track.x[:2], track.P[:2, :2], h, sh, track.extent, self.rsu,
+            nodes = pose_nodes(track.x[:2], track.P[:2, :2], h, sh, extent, self.rsu,
                                self.bore, 0.0)
         else:
             u, r, th, _ = V.to_polar(track.x[None, :2], self.rsu, self.bore, V.P["rsu_h"],
