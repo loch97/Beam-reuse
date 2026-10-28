@@ -963,5 +963,88 @@ class CoverageObjectiveTests(unittest.TestCase):
         self.assertEqual(fe.prediction(old, 0.4)["extent"], (3.0, 1.5))
 
 
+
+class LinkBudgetSpeckleTests(unittest.TestCase):
+    """Round 5: explicit link-budget parameters and Gamma(m) speckle in the extended detector."""
+
+    @classmethod
+    def setUpClass(cls):
+        from isac.site import SiteConfig
+
+        CL.configure()
+        cls.SiteConfig = SiteConfig
+        cls.meta, cls.rsu, cls.bore = LS.geometry()
+        rng = np.random.default_rng(5)
+        cls.grants = CL.Scheduler(cls.rsu, cls.bore, rng, n_grants=4).grants(0.4)
+        cls.trk = TR.CVTracker(0, 0.0, (5.25, -62.0), (0.0, 8.0), cls.rsu, cls.bore,
+                               (4.73, 1.88), P0=np.diag([0.3, 0.3, 0.2, 0.2]))
+        cls.rcs = RcsReport(-15.0, -15.0, 0, "x", np.array([-18.0, -15.0, -12.0]), np.ones(3) / 3)
+
+    def test_explicit_link_budget(self):
+        S = self.SiteConfig
+        a = S(rsu_xy=self.rsu, boresight_rad=self.bore, tx_power_dbm=38.0, noise_figure_db=7.0,
+              noise_bandwidth_hz=190.08e6, element_gain_dbi=5.0)
+        self.assertEqual((a.p_ref_dbm, a.nf_rx, a.noise_bw, a.e_max), (38.0, 7.0, 190.08e6, 5.0))
+        with self.assertRaises(ValueError):
+            S(tx_power_dbm=38.0, p_ref_dbm=30.0)
+        pre = S.fr2_38dbm(rsu_xy=self.rsu, boresight_rad=self.bore)
+        self.assertEqual((pre.p_ref_dbm, pre.nf_rx, pre.noise_bw, pre.e_max, pre.sensing_bandwidth_hz),
+                         (38.0, 7.0, 190.08e6, 5.0, 190.08e6))
+        tr = self.trk.report()
+        ref = BeamFrontEnd(self.rsu, self.bore).dedicated(tr, [], self.rcs, t=0.0)
+        new = BeamFrontEnd(site=a).dedicated(tr, [], self.rcs, t=0.0)
+        expect = ((38.0 - V.P["p_ref_dbm"]) - 10 * math.log10(190.08e6 / V.P["B"])
+                  - (7.0 - V.P["nf_rx"]) + 2 * (5.0 - V.P["e_max"]))
+        np.testing.assert_array_equal(new.weights, ref.weights)
+        self.assertAlmostEqual(new.pred_cell_snr_db - ref.pred_cell_snr_db, expect, places=6)
+        self.assertEqual(V.P["p_ref_dbm"], CL.V.P["p_ref_dbm"])  # globals restored
+
+    def test_cell_pd_series_exact(self):
+        from scipy.stats import ncx2
+
+        eta = -math.log(V.P["pfa"])
+        rho = np.array([0.1, 1.0, 5.0, 20.0, 100.0, 1000.0, 1e4])
+        leak = np.array([0.0, 0.0, 0.5, 2.0, 0.0, 3.0, 0.0])
+        ray = TG.cell_pd(rho, leak)
+        saved = dict(V.P)
+        try:
+            V.P["speckle_m"] = 1.0 + 1e-9
+            np.testing.assert_allclose(TG.cell_pd(rho, leak), ray, atol=1e-8)
+            V.P["speckle_m"] = float("inf")
+            np.testing.assert_allclose(TG.cell_pd(rho, leak),
+                                       ncx2.sf(2 * eta, 2, 2 * rho / (1 + leak)), atol=1e-10)
+            rng = np.random.default_rng(1)
+            V.P["speckle_m"] = 3.0
+            S = rng.gamma(3.0, 1 / 3.0, size=(200000, 1)) * (rho / (1 + leak))[None, :]
+            n = (rng.normal(size=S.shape) + 1j * rng.normal(size=S.shape)) / math.sqrt(2)
+            mc = (np.abs(np.sqrt(S) + n) ** 2 > eta).mean(axis=0)
+            np.testing.assert_allclose(TG.cell_pd(rho, leak), mc, atol=0.004)
+            pd = [V.P.__setitem__("speckle_m", m) or float(TG.cell_pd(np.array([40.0]))[0])
+                  for m in (1.0 + 1e-9, 2.0, 8.0, float("inf"))]
+            self.assertTrue(np.all(np.diff(pd) > 0))  # less fading, higher P_D at high SNR
+        finally:
+            V.P.clear()
+            V.P.update(saved)
+
+    def test_speckle_order_in_planning(self):
+        tr = self.trk.report()
+        ray = BeamFrontEnd(self.rsu, self.bore)
+        site = self.SiteConfig(rsu_xy=self.rsu, boresight_rad=self.bore, speckle_m=4.0)
+        fe = BeamFrontEnd(site=site)
+        lazy = fe.plan(tr, self.grants, self.rcs)
+        full = BeamFrontEnd(site=site, lazy=False).plan(tr, self.grants, self.rcs)
+        self.assertEqual((lazy.mode, lazy.grant, lazy.tag), (full.mode, full.grant, full.tag))
+        self.assertAlmostEqual(lazy.pd_pred, full.pd_pred, places=12)
+        off, pd = lazy.pd_offset_curve
+        self.assertAlmostEqual(float(pd[np.argmin(abs(off))]), lazy.pd_pred, places=9)
+        self.assertTrue(np.all(np.diff(pd) >= -1e-12))
+        self.assertNotIn("speckle_m", V.P)
+        d_ray = ray.dedicated(tr, [], self.rcs, t=0.0)
+        d_m = fe.dedicated(tr, [], self.rcs, t=0.0)
+        np.testing.assert_array_equal(d_ray.weights, d_m.weights)
+        if d_ray.pd_pred > 0.6:
+            self.assertGreater(d_m.pd_pred, d_ray.pd_pred)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -56,7 +56,7 @@ from .interfaces import BeamDecision, RcsReport
 from .quadrature import UELossCache
 from .rcs import RcsLook
 from .target import (FP, PoseNodes, box_scatterers, pose_nodes, extended_pd_shifts, cell_snr,
-                     array_gain, pd_upper_bound, focus_snr, fixed_cell_pd_shifts)
+                     array_gain, pd_upper_bound, focus_snr, fixed_cell_pd_shifts, cell_pd)
 from .tracker import heading_of, predict_state, polar_jacobian
 from .detection import delay_power
 
@@ -362,7 +362,7 @@ class BeamFrontEnd:
         with the mean UE leakage."""
         lp = math.log(V.P["pfa"])
         sinr = rho / (1 + leak)
-        return sum(w * (np.exp(lp / (1 + x * sinr)).sum(axis=2) @ nodes.w)
+        return sum(w * (cell_pd(x * sinr, None, lp).sum(axis=2) @ nodes.w)
                    for x, w in zip(10 ** (np.asarray(sigma) / 10), weights))
 
     def _annotate(self, d, pred, parts, bw, sigma, weights):
@@ -836,7 +836,7 @@ class BeamFrontEnd:
         pd = np.zeros(len(rho))
         cells = np.zeros(len(rho)) if s_q is not None else np.full(len(rho), np.nan)
         for x, w in zip(10 ** (sigma / 10), weights):
-            pd += w * (np.exp(lp * (1 + leak) / (1 + leak + x * rho)).max(axis=2) @ nodes.w)
+            pd += w * (cell_pd(x * rho, leak, lp).max(axis=2) @ nodes.w)
             if s_q is not None:
                 cells += w * ((10 * np.log10(np.maximum(x * sinr, 1e-30)) >= s_q).sum(axis=2)
                               @ nodes.w)
@@ -1128,7 +1128,7 @@ class BeamFrontEnd:
             rho = sum(pool[a]["rho"][b][:, nodes.dom] for a, b in chosen)
             leak = sum(pool[a]["leak"][b][:, nodes.dom] for a, b in chosen)
         x = 10 ** (model / 10)
-        return np.exp(lp * (1 + leak) / (1 + leak + x[:, None] * rho[None, :])) @ nodes.w
+        return cell_pd(x[:, None] * rho[None, :], leak, lp) @ nodes.w
 
     @staticmethod
     def _table(rows, pairs):

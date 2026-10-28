@@ -44,6 +44,15 @@ class SiteConfig:
     Scene: ``rcs_prior_dbsm`` (design RCS used when the tracker sends none), ``interference``
     (corridor interference in ``model.ue_link``), ``ue_clutter``.
     ``extra`` holds any further ``model.P`` keys to override.
+
+    Explicit link budget (aliases; give either name, not both): ``tx_power_dbm`` = total conducted
+    TX power (= ``p_ref_dbm``; boresight EIRP = tx_power + 10 log10 M + element gain),
+    ``noise_figure_db`` (= ``nf_rx``), ``noise_bandwidth_hz`` (= ``noise_bw``, the noise reference
+    bandwidth: per-RE SNR = P / (k T F B)), ``element_gain_dbi`` (= ``e_max``, element pattern peak,
+    applied on transmit and receive). ``SiteConfig.fr2_38dbm(...)`` is the local FR2 preset.
+    Fading: ``speckle_m`` is the Gamma (Nakagami) order of each cell's power for the extended
+    model: 1 (None) = Rayleigh speckle, as before; larger = less fluctuation; ``float("inf")`` =
+    deterministic cell power (Marcum Q). The paper's point detector stays Swerling 1.
     """
 
     rsu_xy: Optional[tuple] = None
@@ -70,10 +79,36 @@ class SiteConfig:
     snr_sigma_db: float = 0.0
     sigma_hermite_nodes: int = 5
     sensing_bandwidth_hz: Optional[float] = None
+    tx_power_dbm: Optional[float] = None
+    noise_figure_db: Optional[float] = None
+    noise_bandwidth_hz: Optional[float] = None
+    element_gain_dbi: Optional[float] = None
+    speckle_m: Optional[float] = None
     rcs_prior_dbsm: Optional[float] = None
     interference: Optional[bool] = None
     ue_clutter: Optional[bool] = None
     extra: dict = field(default_factory=dict)
+
+    def __post_init__(self):
+        for a, b in (("tx_power_dbm", "p_ref_dbm"), ("noise_figure_db", "nf_rx"),
+                     ("noise_bandwidth_hz", "noise_bw"), ("element_gain_dbi", "e_max")):
+            if getattr(self, a) is not None:
+                if getattr(self, b) is not None and getattr(self, b) != getattr(self, a):
+                    raise ValueError(f"give {a} or {b}, not both")
+                setattr(self, b, getattr(self, a))
+        if self.speckle_m is not None and not self.speckle_m > 0:
+            raise ValueError("speckle_m must be positive (inf: deterministic)")
+
+    @classmethod
+    def fr2_38dbm(cls, **kw):
+        """Local mimo_tracking FR2 link budget: 38 dBm TX over 190.08 MHz, NF 7 dB, 5 dBi
+        elements (the PSD of a 41 dBm / 400 MHz FR2 BS; source: a summary of the TR 38.901
+        calibration tables, not checked against the spec), sensing at full-band resolution.
+        Any field can be overridden by keyword."""
+        base = dict(tx_power_dbm=38.0, noise_figure_db=7.0, noise_bandwidth_hz=190.08e6,
+                    element_gain_dbi=5.0, sensing_bandwidth_hz=190.08e6)
+        base.update(kw)
+        return cls(**base)
 
     def overrides(self):
         """``model.P`` keys this site sets."""
@@ -86,6 +121,8 @@ class SiteConfig:
             m = self.M if self.M is not None else V.P["M"]
             e = self.e_max if self.e_max is not None else V.P["e_max"]
             out["p_ref_dbm"] = self.eirp_dbm - 10 * math.log10(m) - (e if self.element_pattern else 0.0)
+        if self.speckle_m is not None:
+            out["speckle_m"] = float(self.speckle_m)
         out.update(self.extra)
         return out
 

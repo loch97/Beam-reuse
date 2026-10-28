@@ -236,6 +236,37 @@ So within one grant, flatter coverage spreads the energy, consistent with the po
 
 **Extent prior.** `BeamFrontEnd(extent_prior=f)` plans with `f(track)` instead of `track.extent`. `site.young_track_extent(min_extent=(4.5, 1.9), min_hits=3, class_extents=None)` gives tracks with fewer than `min_hits` hits (the new `TrackReport.hits`; unknown counts as young) at least that box, or at least their class box.
 
+#### Fifth-round notes (carrier-phase fix in the local RT, explicit link budget, speckle)
+
+**What the local RT fix invalidates.** The local mimo_tracking RT synthesis missed the carrier phase e^{−j2πf_cτ}, so diffuse paths added in phase. Every value fitted to that data is invalid:
+- `snr_offset_db` 9.8 and `snr_sigma_db` 5.1;
+- the CLEAN-Pfa match;
+- any fitted `pd_offset_curve`.
+
+None of these were defaults here; `snr_offset_db` and `snr_sigma_db` are inputs and need refitting on the regenerated data. This repository's own RT validation is not affected:
+- Target power is an incoherent sum of per-path powers |a|² (`rt_scoring.echo_power`).
+- The communication channel applies e^{−j2π(f_c+f)τ} explicitly (`rt_scoring.communication_power`).
+
+**Explicit link budget.** `SiteConfig(tx_power_dbm=, noise_figure_db=, noise_bandwidth_hz=, element_gain_dbi=)` are aliases of `p_ref_dbm`, `nf_rx`, `noise_bw` and `e_max`; give one name or the other, not both.
+- TX power is the total conducted power: boresight EIRP = P + 10·log10 M + element gain.
+- Per-RE SNR = P / (kT·F·B) times the beam and path terms; integration adds 10·log10 n_re.
+- The element gain applies on transmit and receive.
+
+`SiteConfig.fr2_38dbm(**overrides)` is the local preset: 38 dBm, NF 7 dB, 190.08 MHz noise bandwidth and sensing resolution, 5 dBi elements. The paper defaults are unchanged. Changing to the preset shifts every predicted SNR by exactly (38 − 34.86) − 10·log10(190.08/122.88) − (7 − 7) + 2·(5 − 8) = −4.76 dB, which the tests check.
+
+**Speckle.** The extended model already treats each scatterer as Swerling 1, so a cell's power is exponential: fully developed (Rayleigh) speckle. `SiteConfig(speckle_m=m)` makes the cell power Gamma(m) so the fluctuation can be fitted:
+- m = 1 (or None): unchanged;
+- m > 1: less fluctuation;
+- m = ∞: deterministic cell power, i.e. Marcum Q.
+
+`target.cell_pd` evaluates this exactly with a negative-binomial series. It is checked against Rayleigh (1e-10), Marcum Q (1e-16) and Monte Carlo. It is used everywhere in the extended model and in the multi-grant combination. Not covered:
+- The paper's point detector, the RCS estimator's likelihood and the closed-loop back end stay Swerling 1.
+- The front end also has no notion of dwell-to-dwell speckle correlation; each look is independent.
+
+`pd_offset_curve` now depends on m, so fitting the new per-dwell detections against it, over a few m values, estimates both the offset and m.
+
+Ranges are treated as one continuum; nothing in the front end bins near and far separately.
+
 ### Extended target in the paper pipeline and RT check
 
 `python -m isac.simulate --target-model extended` runs the paper conditions with the multi-scatterer box in place of the point detector (`target.ExtendedDetector`), paired by seed block with the point model, and writes to `outputs/simulation_extended/`. The paper's effective RCS prior is kept: the dominant scatterer is lowered by the box's own contribution at the full-band reference cell (0–1.3 dB per frame), so the two models agree at that cell.

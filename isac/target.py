@@ -18,7 +18,8 @@ from pathlib import Path
 import json
 import math
 import numpy as np
-from scipy.special import ndtr
+from scipy.special import ndtr, gammaln, gammainc
+from scipy.stats import ncx2
 from . import model as V
 from .detection import delay_power
 
@@ -173,6 +174,46 @@ def cell_snr(W, nodes, n_re, bandwidth):
     return np.einsum("bnk,nck->bnc", rho, coupling, optimize=True)
 
 
+def cell_pd(rho, leak=None, lp=None):
+    """Probability that a cell crosses the square-law threshold.
+
+    ``rho`` is the cell's mean target SNR over thermal noise and ``leak`` its UE leakage, both
+    over noise; the threshold is eta = -ln(pfa) on the noise-plus-leakage scale. The target power
+    in the cell is Gamma distributed with order m = ``model.P["speckle_m"]``:
+    - m unset or 1: exponential (Rayleigh speckle, Swerling 1), P = exp(ln pfa (1+L)/(1+L+rho)),
+      evaluated exactly as before;
+    - m != 1: exact negative-binomial series (m > 1 less fluctuation);
+    - m = inf: deterministic cell power, i.e. Marcum Q (Poisson series).
+    P is increasing in rho for every m, so the screening bounds stay valid.
+    """
+    lp = math.log(V.P["pfa"]) if lp is None else lp
+    m = V.P.get("speckle_m")
+    if m is None or m == 1:
+        if leak is None:
+            return np.exp(lp / (1 + rho))
+        return np.exp(lp * (1 + leak) / (1 + leak + rho))
+    s = np.asarray(rho, float) if leak is None else np.asarray(rho / (1 + leak), float)
+    eta = -lp
+    # Exact: the statistic is a Poisson(S) mixture of Gamma(k + 1, 1) variables; averaging the
+    # Poisson over S ~ Gamma(m, s/m) gives a negative binomial. P(miss) = sum_k pmf(k) P(k+1, eta)
+    # with P the regularised lower incomplete gamma, negligible once k >> eta.
+    s_ = np.maximum(s, 1e-300)
+    miss = np.zeros(s.shape)
+    k = -1
+    while True:
+        k += 1
+        tail = gammainc(k + 1, eta)
+        if tail < 1e-12:
+            break
+        if np.isinf(m):
+            logpmf = -s_ + k * np.log(s_) - gammaln(k + 1)
+        else:
+            logpmf = (gammaln(k + m) - gammaln(m) - gammaln(k + 1)
+                      + m * np.log(m / (m + s_)) + k * np.log(s_ / (m + s_)))
+        miss += np.exp(logpmf) * tail
+    return 1.0 - miss
+
+
 def gain_upper_bound(W, u_lo, u_hi):
     """Rigorous upper bound of G_w(u) = |a(u)^T w|^2 / M over u in [u_lo, u_hi], per beam.
 
@@ -204,7 +245,7 @@ def pd_upper_bound(W, nodes, n_re, shifts_db, weights):
     unit = float(np.sum(10 ** (V.rc_snr_db(1.0, 0.0, r_min, nodes.sigma_dbsm, 90.0, n_re) / 10)))
     lp = math.log(V.P["pfa"])
     scale = 10 ** (np.atleast_1d(np.asarray(shifts_db, float)) / 10)
-    pd = np.exp(lp / (1 + scale[:, None] * unit * g[None, :]))
+    pd = cell_pd(scale[:, None] * unit * g[None, :], None, lp)
     return np.asarray(weights) @ pd
 
 
@@ -238,7 +279,7 @@ def fixed_cell_pd_shifts(W, nodes, n_re, bandwidth, u0, r0, clutter=None, shifts
     for i, x in enumerate(scale):
         for q in range(leaks.shape[1]):
             L = leaks[:, q, None]
-            out[i] += cw[q] * (np.exp(lp * (1 + L) / (1 + L + x * rho)) @ nodes.w)
+            out[i] += cw[q] * (cell_pd(x * rho, L, lp) @ nodes.w)
     return out
 
 
@@ -267,7 +308,7 @@ def extended_pd_shifts(W, nodes, n_re, bandwidth, clutter=None, focus=None, shif
     else:
         raise ValueError(focus)
     best = rho.max(axis=2)
-    upper = np.stack([np.exp(lp / (1 + x * best)) @ nodes.w for x in scale])
+    upper = np.stack([cell_pd(x * best, None, lp) @ nodes.w for x in scale])
     if clutter is None:
         return upper, upper
     active = np.arange(len(W))
@@ -287,7 +328,7 @@ def extended_pd_shifts(W, nodes, n_re, bandwidth, clutter=None, focus=None, shif
         pd = np.zeros(rho.shape)
         for q in range(len(cu)):
             leak = cp[:, q, None, None] * resp[q][None]
-            pd += cw[q] * np.exp(lp * (1 + leak) / (1 + leak + x * rho))
+            pd += cw[q] * cell_pd(x * rho, leak, lp)
         out[i, active] = pd.max(axis=2) @ nodes.w
     return out, upper
 
