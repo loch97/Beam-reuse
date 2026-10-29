@@ -267,6 +267,19 @@ None of these were defaults here; `snr_offset_db` and `snr_sigma_db` are inputs 
 
 Ranges are treated as one continuum; nothing in the front end bins near and far separately.
 
+#### Sixth-round notes (detection calibration v6, local mimo_tracking)
+
+`SiteConfig.mimo_v6(**overrides)` holds the local calibration of 2026-10-29, fitted after the carrier-phase fix on 918 track dwells of the validation scene. It is `fr2_38dbm` plus:
+- `pfa = exp(−10^1.3)` ≈ 2.2e-9, the CLEAN 13 dB threshold;
+- `snr_offset_db = 19.4` and `snr_sigma_db = 4.3`, the spread Swerling fit (NLL 314.1, against 331.3 for a plain 18.9 dB offset);
+- `rcs_prior_by_class` = −1.1 dBsm shifted by the per-class offsets relative to the pooled 18.9 dB: car −5.9, bus +0.1, truck +0.8 dBsm.
+
+The new `SiteConfig.rcs_prior_by_class` and `BeamFrontEnd.default_rcs(track)` use the per-class value when the tracker sends no RCS and `TrackReport.cls` is listed. Cyclists and pedestrians, never detected, fall back to `rcs_prior_dbsm`.
+
+It is a preset, not a default. The offset belongs to that scene, the CLEAN detector and the footprint-matching rule, and the paper pipeline must stay reproducible. Its accuracy is limited in two ways:
+- The fit used a single-cell Swerling curve on a summary SNR, not the front end's own event (any cell, pose-averaged). Verify it in closed loop, or refit it against `pd_offset_curve` (available from a8c045c on).
+- That the spread fit used the CLEAN Pfa, like the plain fit, is an assumption here; please confirm.
+
 ### Extended target in the paper pipeline and RT check
 
 `python -m isac.simulate --target-model extended` runs the paper conditions with the multi-scatterer box in place of the point detector (`target.ExtendedDetector`), paired by seed block with the point model, and writes to `outputs/simulation_extended/`. The paper's effective RCS prior is kept: the dominant scatterer is lowered by the box's own contribution at the full-band reference cell (0–1.3 dB per frame), so the two models agree at that cell.

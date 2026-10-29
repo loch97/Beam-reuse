@@ -184,9 +184,16 @@ class BeamFrontEnd:
             pred["nodes"] = pose_nodes(x[:2], P[:2, :2], h, sh, extent, self.rsu, self.bore, 0.0)
         return pred
 
-    def default_rcs(self):
-        prior = self.site.rcs_prior_dbsm if self.site is not None else None
-        return RcsReport(PAPER_RCS_PRIOR_DBSM if prior is None else prior)
+    def default_rcs(self, track=None):
+        """Design RCS when the tracker sends none: the site's per-class value for ``track.cls``
+        when listed, else the site's ``rcs_prior_dbsm``, else the paper's pooled prior."""
+        site = self.site
+        cls = getattr(track, "cls", None)
+        if site is not None and site.rcs_prior_by_class and cls in site.rcs_prior_by_class:
+            return RcsReport(float(site.rcs_prior_by_class[cls]), source=f"site-class:{cls}")
+        prior = site.rcs_prior_dbsm if site is not None else None
+        return RcsReport(PAPER_RCS_PRIOR_DBSM if prior is None else prior,
+                         source="calibration" if prior is None else "site")
 
     def rcs_nodes(self, rcs, calibrated=True):
         """RCS values (dBsm) and weights the predicted P_D is averaged over.
@@ -582,7 +589,7 @@ class BeamFrontEnd:
         on_unmet = self.on_unmet if on_unmet is None else on_unmet
         if on_unmet not in ("dedicated", "reuse_pd", "best_quality"):
             raise ValueError(on_unmet)
-        rcs = self.default_rcs() if rcs is None else rcs
+        rcs = self.default_rcs(track) if rcs is None else rcs
         req = requirement if requirement is not None else getattr(track, "requirement", None)
         req = req if req is not None and req.active() else None
         s_q = req.quality_snr_db if req is not None else None
@@ -757,7 +764,7 @@ class BeamFrontEnd:
         taken = {}  # grant index -> (owner track, decision)
         out = []
         for k, tr in enumerate(tracks):
-            r_k = self.default_rcs() if rcs[k] is None else rcs[k]
+            r_k = self.default_rcs(tr) if rcs[k] is None else rcs[k]
             req = reqs[k] if reqs[k] is not None else getattr(tr, "requirement", None)
             req = req if req is not None and req.active() else None
             sigma, weights = self.rcs_nodes(r_k)
@@ -885,7 +892,7 @@ class BeamFrontEnd:
         if objective not in OBJECTIVES:
             raise ValueError(objective)
         on_unmet = self.on_unmet if on_unmet is None else on_unmet
-        rcs = self.default_rcs() if rcs is None else rcs
+        rcs = self.default_rcs(track) if rcs is None else rcs
         req = requirement if requirement is not None else getattr(track, "requirement", None)
         req = req if req is not None and req.active() else None
         if objective == "pd" or max_grants <= 1 or len(grants) <= 1:
@@ -1148,7 +1155,7 @@ class BeamFrontEnd:
 
     @_in_site
     def dedicated(self, track, grants, rcs=None, t=None, n_cand=0, n_eval=0, requirement=None):
-        rcs = self.default_rcs() if rcs is None else rcs
+        rcs = self.default_rcs(track) if rcs is None else rcs
         t = (grants[0].t if grants else track.t) if t is None else t
         req = requirement if requirement is not None else getattr(track, "requirement", None)
         req = req if req is not None and req.active() else None

@@ -1046,5 +1046,51 @@ class LinkBudgetSpeckleTests(unittest.TestCase):
             self.assertGreater(d_m.pd_pred, d_ray.pd_pred)
 
 
+
+class CalibrationPresetTests(unittest.TestCase):
+    """Round 6: mimo_tracking v6 calibration preset and per-class design RCS."""
+
+    @classmethod
+    def setUpClass(cls):
+        from isac.site import SiteConfig
+
+        CL.configure()
+        cls.SiteConfig = SiteConfig
+        cls.meta, cls.rsu, cls.bore = LS.geometry()
+        cls.grants = CL.Scheduler(cls.rsu, cls.bore, np.random.default_rng(5), n_grants=4).grants(0.4)
+
+    def test_preset_values(self):
+        s = self.SiteConfig.mimo_v6(rsu_xy=self.rsu, boresight_rad=self.bore)
+        self.assertEqual((s.p_ref_dbm, s.nf_rx, s.noise_bw, s.e_max, s.sensing_bandwidth_hz),
+                         (38.0, 7.0, 190.08e6, 5.0, 190.08e6))
+        self.assertAlmostEqual(s.pfa, math.exp(-10 ** 1.3))
+        self.assertEqual((s.snr_offset_db, s.snr_sigma_db, s.rcs_prior_dbsm), (19.4, 4.3, -1.1))
+        np.testing.assert_allclose([s.rcs_prior_by_class[c] for c in ("car", "bus", "truck")],
+                                   [-5.9, 0.1, 0.8], atol=1e-9)
+        self.assertEqual(self.SiteConfig.mimo_v6(snr_offset_db=18.9, snr_sigma_db=0.0).snr_offset_db,
+                         18.9)
+
+    def test_per_class_design_rcs(self):
+        site = self.SiteConfig.mimo_v6(rsu_xy=self.rsu, boresight_rad=self.bore)
+        fe = BeamFrontEnd(site=site, on_unmet="reuse_pd")
+        x, P = np.array([5.25, -62.0, 0.0, 8.0]), np.diag([0.3, 0.3, 0.2, 0.2])
+        car = TrackReport(0, 0.0, x, P, (4.73, 1.88), "car")
+        bus = TrackReport(0, 0.0, x, P, (4.73, 1.88), "bus")
+        ped = TrackReport(0, 0.0, x, P, (4.73, 1.88), "pedestrian")
+        self.assertEqual(fe.default_rcs(car).design_dbsm, site.rcs_prior_by_class["car"])
+        self.assertEqual(fe.default_rcs(ped).design_dbsm, -1.1)
+        self.assertEqual(BeamFrontEnd(self.rsu, self.bore).default_rcs(car).design_dbsm,
+                         -1.10319987650635)
+        dc, db_ = fe.dedicated(car, [], t=0.4), fe.dedicated(bus, [], t=0.4)
+        self.assertEqual(dc.info["rcs_source"], "site-class:car")
+        self.assertAlmostEqual(db_.rcs_design_dbsm - dc.rcs_design_dbsm, 6.0, places=9)
+        self.assertGreaterEqual(db_.pd_pred, dc.pd_pred)
+        d = fe.plan(car, self.grants)
+        self.assertEqual(d.rcs_design_dbsm, site.rcs_prior_by_class["car"])
+        # calibration lowers the predicted P_D relative to the uncalibrated link budget
+        raw = BeamFrontEnd(site=self.SiteConfig.fr2_38dbm(rsu_xy=self.rsu, boresight_rad=self.bore))
+        self.assertLess(dc.pd_pred, raw.dedicated(car, [], t=0.4).pd_pred)
+
+
 if __name__ == "__main__":
     unittest.main()
