@@ -112,7 +112,7 @@ class BeamFrontEnd:
         self.site, self._depth = site, 0
         if on_unmet not in ("dedicated", "reuse_pd", "best_quality"):
             raise ValueError(on_unmet)
-        if evidence_cell not in ("scatterer", "predicted"):
+        if evidence_cell not in ("scatterer", "predicted", "event"):
             raise ValueError(evidence_cell)
         self.on_unmet, self.evidence_cell = on_unmet, evidence_cell
         if rsu is None:
@@ -215,6 +215,10 @@ class BeamFrontEnd:
             w = (w[:, None] * wo[None, :]).ravel()
         return sig, w
 
+    def calibration_nodes(self):
+        """Site SNR calibration as (offsets added to the RCS in dB, weights); paper: ([0], [1])."""
+        return self.site.snr_nodes() if self.site is not None else (np.zeros(1), np.ones(1))
+
     def snr_offset(self):
         return self.site.snr_offset_db if self.site is not None else 0.0
 
@@ -266,9 +270,15 @@ class BeamFrontEnd:
         ``evidence_cell="scatterer"``: the cell follows the dominant scatterer, as in the paper's
         conditional detector and the closed-loop back end. ``"predicted"``: the cell is fixed at the
         decision-time predicted dominant position (``BeamDecision.u_hat``, ``r_hat``), and the pose
-        error moves the scatterers relative to it. ``bandwidth`` is the resolution bandwidth.
+        error moves the scatterers relative to it. ``"event"``: no designated cell; the curve is the
+        look's own detection event (any scatterer cell, pose-averaged, UE leakage, site
+        calibration nodes folded in), the event ``pd_pred`` and ``pd_offset_curve`` describe.
+        ``bandwidth`` is the resolution bandwidth.
         """
         grid = curve_sigma()
+        if self.evidence_cell == "event":
+            return self.offset_curve(W, pred, n_re, bandwidth, clutter, *self.calibration_nodes(),
+                                     offsets=grid)
         model_grid = grid - self.snr_offset()
         W = np.atleast_2d(W)
         if self.evidence_cell == "predicted":
@@ -1117,6 +1127,12 @@ class BeamFrontEnd:
         """Designated-cell crossing curve of a multi-grant look (summed cell SNR and leakage)."""
         lp = math.log(V.P["pfa"])
         model = grid - self.snr_offset()
+        if self.evidence_cell == "event":
+            rho = sum(pool[a]["rho"][b] for a, b in chosen)
+            leak = sum(pool[a]["leak"][b] for a, b in chosen)
+            off, wo = self.calibration_nodes()
+            return np.array([self._combined(10 ** (g / 10) * rho[None], leak[None], nodes, off,
+                                            wo, None)[0][0] for g in grid])
         if self.evidence_cell == "predicted":
             rho = sum(focus_snr(pool[a]["e"]["W"][[pool[a]["cs"][b]]], nodes, pool[a]["e"]["n_re"],
                                 bw, pred["u_hat"], pred["r_hat"])[0] for a, b in chosen)
@@ -1247,7 +1263,15 @@ class BeamFrontEnd:
         box face is visible). With ``evidence_cell="predicted"`` the cell is fixed at the
         decision's (u_hat, r_hat). The site's ``snr_offset_db`` is removed, so the posterior is
         in calibrated RCS. Returns None when the back end reported no designated-cell evidence.
+
+        With ``evidence_cell="event"`` the evidence is the look's detection event alone
+        (``rep.rcs_detected`` if given, else ``rep.detected``: a detection inside the track's
+        gate) against the decision-time curve ``d.pd_curve``; the look has no unit nodes, so
+        the estimator uses its event term only (``rcs_likelihood="event+truncated"``).
         """
+        if self.evidence_cell == "event":
+            hit = rep.rcs_detected if rep.rcs_detected is not None else rep.detected
+            return RcsLook(d.t, bool(hit), d.pd_curve_sigma, d.pd_curve)
         if rep.rcs_detected is None:
             return None
         look = RcsLook(d.t, bool(rep.rcs_detected), d.pd_curve_sigma, d.pd_curve)

@@ -1169,5 +1169,65 @@ class DedicatedSizingTests(unittest.TestCase):
         self.assertLess(rep.design_dbsm, rep.mean_dbsm)
 
 
+class EventEvidenceTests(unittest.TestCase):
+    """Round 7 follow-up: the look's detection event as RCS evidence (no designated cell)."""
+
+    @classmethod
+    def setUpClass(cls):
+        from isac.site import SiteConfig
+
+        CL.configure()
+        cls.meta, cls.rsu, cls.bore = LS.geometry()
+        cls.site = SiteConfig.mimo_v6(rsu_xy=cls.rsu, boresight_rad=cls.bore)
+        cls.grants = CL.Scheduler(cls.rsu, cls.bore, np.random.default_rng(5), n_grants=4).grants(0.4)
+        P = np.diag([0.3, 0.3, 0.2, 0.2])
+        cls.track = TrackReport(0, 0.0, np.array([5.25, -30.0, 0.0, 8.0]), P, (4.73, 1.88))
+        cls.rcs = RcsEstimator(RcsPopulation.mimo_v6()).report(0.4)
+
+    def check_curve(self, d):
+        """The curve, averaged over the decision's RCS nodes, reproduces pd_pred."""
+        self.assertIsNotNone(d.pd_curve)
+        avg = np.interp(self.rcs.nodes_dbsm, d.pd_curve_sigma, d.pd_curve) @ self.rcs.weights
+        self.assertAlmostEqual(avg, d.pd_pred, delta=5e-3)
+
+    def test_curve_matches_decision(self):
+        fe = BeamFrontEnd(site=self.site, evidence_cell="event", on_unmet="reuse_pd")
+        near = TrackReport(0, 0.0, np.array([5.25, -15.0, 0.0, 8.0]), self.track.P, (4.73, 1.88))
+        d = fe.plan(near, self.grants, self.rcs, t=0.4)
+        self.assertEqual(d.mode, "reuse")
+        self.check_curve(d)
+        self.check_curve(fe.dedicated(self.track, self.grants, self.rcs, t=0.4))
+        dm = fe.plan_multi(self.track, self.grants, self.rcs, t=0.4, max_grants=2,
+                           on_unmet="best_quality")
+        self.assertEqual(dm.mode, "reuse_multi")
+        self.check_curve(dm)
+
+    def test_look_and_estimator(self):
+        fe = BeamFrontEnd(site=self.site, evidence_cell="event", on_unmet="reuse_pd")
+        d = fe.plan(self.track, self.grants, self.rcs, t=0.4)
+        look = fe.rcs_look(d, SensingReport(0.4, True), self.track)
+        self.assertTrue(look.detected)
+        self.assertIsNone(look.unit_db)
+        self.assertFalse(fe.rcs_look(d, SensingReport(0.4, True, rcs_detected=False),
+                                     self.track).detected)
+        # synthetic events drawn from the curve itself: the posterior centres on the truth
+        rng = np.random.default_rng(3)
+        truth = -12.0
+        p = float(np.interp(truth, d.pd_curve_sigma, d.pd_curve))
+        self.assertTrue(0.05 < p < 0.95)
+        est = RcsEstimator(static_population(-6.0, 4.0))
+        for k in range(200):
+            est.update(RcsLook(0.4, bool(rng.random() < p), d.pd_curve_sigma, d.pd_curve))
+        self.assertAlmostEqual(est.report().mean_dbsm, truth, delta=1.5)
+
+    def test_default_unchanged(self):
+        d0 = BeamFrontEnd(site=self.site, on_unmet="reuse_pd").plan(self.track, self.grants,
+                                                                      self.rcs, t=0.4)
+        d1 = BeamFrontEnd(site=self.site, evidence_cell="event",
+                          on_unmet="reuse_pd").plan(self.track, self.grants, self.rcs, t=0.4)
+        self.assertEqual((d0.mode, d0.grant, d0.tag, d0.pd_pred), (d1.mode, d1.grant, d1.tag,
+                                                                    d1.pd_pred))
+
+
 if __name__ == "__main__":
     unittest.main()
