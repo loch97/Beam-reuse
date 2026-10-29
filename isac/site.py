@@ -116,13 +116,15 @@ class SiteConfig:
     def mimo_v6(cls, **kw):
         """Local mimo_tracking calibration v6 (2026-10-29, after the carrier-phase fix).
 
-        ``fr2_38dbm`` plus the detection calibration fitted on 918 track dwells of the
+        ``fr2_38dbm`` with isotropic elements (``element_pattern=False``, as the RT transmitter and
+        the fit used: Sionna "iso" pattern) plus the detection calibration fitted on 918 track
+        dwells of the
         simple_street_canyon_with_cars validation scene (40 worlds, 32x1 panel, CLEAN detector,
         footprint + 1 m matching), front end 8fd8a63:
         - ``pfa`` = exp(-10^1.3) (2.2e-9), the false-alarm rate of CLEAN's 13 dB threshold;
         - ``snr_offset_db`` 19.4 and ``snr_sigma_db`` 4.3: the "swerling_spread" fit (single
           Swerling curve with a log-normal SNR error; NLL 314.1 vs 331.3 for a plain 18.9 dB
-          offset). Taken to use the CLEAN Pfa, like the 18.9 dB fit; check this with the fit;
+          offset); confirmed to use the CLEAN Pfa, like the 18.9 dB fit;
         - ``rcs_prior_by_class``: the design RCS -1.1 dBsm shifted by the per-class offsets of the
           plain fit relative to its pooled 18.9 dB (car 23.7, bus 17.7, truck 17.0 dB), i.e.
           car -5.9, bus +0.1, truck +0.8 dBsm. Cyclists and pedestrians were never detected and
@@ -132,7 +134,8 @@ class SiteConfig:
         closed loop or refit it against ``BeamDecision.pd_offset_curve``. It is specific to that
         scene, detector and matching rule, hence a preset and not a default.
         """
-        base = dict(pfa=math.exp(-10 ** 1.3), snr_offset_db=19.4, snr_sigma_db=4.3,
+        base = dict(element_pattern=False, pfa=math.exp(-10 ** 1.3), snr_offset_db=19.4,
+                    snr_sigma_db=4.3,
                     rcs_prior_dbsm=-1.1,
                     rcs_prior_by_class={"car": -1.1 - (23.7 - 18.9), "bus": -1.1 - (17.7 - 18.9),
                                         "truck": -1.1 - (17.0 - 18.9)})

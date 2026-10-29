@@ -1065,6 +1065,8 @@ class CalibrationPresetTests(unittest.TestCase):
                          (38.0, 7.0, 190.08e6, 5.0, 190.08e6))
         self.assertAlmostEqual(s.pfa, math.exp(-10 ** 1.3))
         self.assertEqual((s.snr_offset_db, s.snr_sigma_db, s.rcs_prior_dbsm), (19.4, 4.3, -1.1))
+        self.assertFalse(s.element_pattern)  # the RT and the fit used isotropic elements
+        self.assertTrue(self.SiteConfig.fr2_38dbm().element_pattern)
         np.testing.assert_allclose([s.rcs_prior_by_class[c] for c in ("car", "bus", "truck")],
                                    [-5.9, 0.1, 0.8], atol=1e-9)
         self.assertEqual(self.SiteConfig.mimo_v6(snr_offset_db=18.9, snr_sigma_db=0.0).snr_offset_db,

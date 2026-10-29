@@ -269,7 +269,7 @@ Ranges are treated as one continuum; nothing in the front end bins near and far 
 
 #### Sixth-round notes (detection calibration v6, local mimo_tracking)
 
-`SiteConfig.mimo_v6(**overrides)` holds the local calibration of 2026-10-29, fitted after the carrier-phase fix on 918 track dwells of the validation scene. It is `fr2_38dbm` plus:
+`SiteConfig.mimo_v6(**overrides)` holds the local calibration of 2026-10-29, fitted after the carrier-phase fix on 918 track dwells of the validation scene. It is `fr2_38dbm` with isotropic elements (`element_pattern=False`, as the RT and the fit used; a correction to the round-5 5 dBi element gain, which applies only to physical hardware) plus:
 - `pfa = exp(−10^1.3)` ≈ 2.2e-9, the CLEAN 13 dB threshold;
 - `snr_offset_db = 19.4` and `snr_sigma_db = 4.3`, the spread Swerling fit (NLL 314.1, against 331.3 for a plain 18.9 dB offset);
 - `rcs_prior_by_class` = −1.1 dBsm shifted by the per-class offsets relative to the pooled 18.9 dB: car −5.9, bus +0.1, truck +0.8 dBsm.
@@ -278,7 +278,7 @@ The new `SiteConfig.rcs_prior_by_class` and `BeamFrontEnd.default_rcs(track)` us
 
 It is a preset, not a default. The offset belongs to that scene, the CLEAN detector and the footprint-matching rule, and the paper pipeline must stay reproducible. Its accuracy is limited in two ways:
 - The fit used a single-cell Swerling curve on a summary SNR, not the front end's own event (any cell, pose-averaged). Verify it in closed loop, or refit it against `pd_offset_curve` (available from a8c045c on).
-- That the spread fit used the CLEAN Pfa, like the plain fit, is an assumption here; please confirm.
+- The spread fit uses the CLEAN Pfa, like the plain fit (confirmed by the local side).
 
 ### Extended target in the paper pipeline and RT check
 
