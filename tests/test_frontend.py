@@ -1254,13 +1254,14 @@ class ClutterKernelTests(unittest.TestCase):
         wn /= wn.sum()
         scale = 10 ** (np.linspace(-30, 20, 23) / 10)
         lp = math.log(2.2e-9)
-        saved = V.P.get("speckle_m")
+        saved = dict(V.P)
         V.P["speckle_m"] = m
         try:
             a = self.brute(scale, rho, cp, resp, cw, wn, lp)
             b = TG._clutter_pd(scale, rho, cp, resp, cw, wn, lp)
         finally:
-            V.P["speckle_m"] = saved
+            V.P.clear()
+            V.P.update(saved)
         self.assertLess(np.abs(a - b).max(), TG.CLUTTER_EPS)
 
     def test_tiny_leak(self):
@@ -1289,7 +1290,7 @@ class ClutterKernelTests(unittest.TestCase):
         sigma, weights = np.array([-6.0, 0.0, 4.0]), np.array([0.2, 0.5, 0.3])
         fe = BeamFrontEnd(*LS.geometry()[1:])
         lp = math.log(V.P["pfa"])
-        saved = V.P.get("speckle_m")
+        saved = dict(V.P)
         try:
             for m in (None, 2.0):
                 V.P["speckle_m"] = m
@@ -1298,7 +1299,8 @@ class ClutterKernelTests(unittest.TestCase):
                 pd = fe._combined(rho, leak, nodes, sigma, weights, None)[0]
                 np.testing.assert_allclose(pd, ref, rtol=0, atol=1e-13)
         finally:
-            V.P["speckle_m"] = saved
+            V.P.clear()
+            V.P.update(saved)
 
     def test_envelope_bounds_curvature(self):
         lp = math.log(2.2e-9)
