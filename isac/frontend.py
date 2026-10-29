@@ -1178,6 +1178,24 @@ class BeamFrontEnd:
         else:
             Wd = np.array([V.beam(pred["u_hat"]), V.beam(pred["u_hat"], V.P["q_wide"])])
         pd = self.detect(Wd, pred, n_re, bw, None, sigma, weights)
+        sizing = None
+        if self.site is not None and self.site.dedicated_sizing:
+            # RE ladder: slow-time doubling at the fixed dedicated PRB width, then the CPI cap.
+            # Energy scales with n_re (no clutter on a dedicated look), so each step is an RCS
+            # shift of 10 log10(n_k / n_base) dB on the same detector.
+            cap = int(self.site.dedicated_cap_re or 32768)
+            ladder = [n_re * 2 ** k for k in range(32) if n_re * 2 ** k < cap] + [cap]
+            ladder = [n for n in ladder if n >= n_re] or [n_re]
+            gain = 10 * np.log10(np.array(ladder, float) / n_re)
+            shifted = self.pd_shifts(Wd, pred, n_re, bw, None,
+                                     (sigma[:, None] + gain[None, :]).ravel())
+            pd_k = np.einsum("s,skb->kb", weights, shifted.reshape(len(sigma), len(ladder), -1))
+            ok = np.flatnonzero(pd_k.max(axis=1) >= self.tau)
+            step = int(ok[0]) if ok.size else len(ladder) - 1
+            n_re, pd = ladder[step], pd_k[step]
+            sizing = dict(dedicated_n_re=int(n_re), dedicated_step=step,
+                          dedicated_ladder=[int(n) for n in ladder],
+                          dedicated_cap_hit=not ok.size)
         c = int(np.argmax(pd))
         grid, curve = self.evidence_curve(Wd[c], pred, n_re, bw, None)
         snr, cells = self.quality(Wd[c], pred, n_re, bw, None, sigma, weights,
@@ -1212,6 +1230,8 @@ class BeamFrontEnd:
         )
         if width is not None:
             d.info["dedicated_width"] = width
+        if sizing is not None:
+            d.info.update(sizing)
         return self._annotate(d, pred, [(Wd[c], n_re, None)], bw, sigma, weights)
 
     # -- evidence for the RCS estimator -------------------------------------------------------

@@ -1073,7 +1073,9 @@ class CalibrationPresetTests(unittest.TestCase):
                          18.9)
 
     def test_per_class_design_rcs(self):
-        site = self.SiteConfig.mimo_v6(rsu_xy=self.rsu, boresight_rad=self.bore)
+        # fixed-size dedicated look, so the P_D comparisons isolate the calibration
+        site = self.SiteConfig.mimo_v6(rsu_xy=self.rsu, boresight_rad=self.bore,
+                                       dedicated_sizing=False)
         fe = BeamFrontEnd(site=site, on_unmet="reuse_pd")
         x, P = np.array([5.25, -62.0, 0.0, 8.0]), np.diag([0.3, 0.3, 0.2, 0.2])
         car = TrackReport(0, 0.0, x, P, (4.73, 1.88), "car")
@@ -1092,6 +1094,79 @@ class CalibrationPresetTests(unittest.TestCase):
         # calibration lowers the predicted P_D relative to the uncalibrated link budget
         raw = BeamFrontEnd(site=self.SiteConfig.fr2_38dbm(rsu_xy=self.rsu, boresight_rad=self.bore))
         self.assertLess(dc.pd_pred, raw.dedicated(car, [], t=0.4).pd_pred)
+
+
+class DedicatedSizingTests(unittest.TestCase):
+    """Round 7: RE-sized dedicated fallback and the mimo_v6 RCS population."""
+
+    @classmethod
+    def setUpClass(cls):
+        from isac.site import SiteConfig
+
+        CL.configure()
+        cls.SiteConfig = SiteConfig
+        cls.meta, cls.rsu, cls.bore = LS.geometry()
+        P = np.diag([0.3, 0.3, 0.2, 0.2])
+        cls.near = TrackReport(0, 0.0, np.array([5.25, -30.0, 0.0, 8.0]), P, (4.73, 1.88), "car")
+        cls.far = TrackReport(0, 0.0, np.array([5.25, -62.0, 0.0, 8.0]), P, (4.73, 1.88), "car")
+
+    def site(self, **kw):
+        return self.SiteConfig.mimo_v6(rsu_xy=self.rsu, boresight_rad=self.bore, **kw)
+
+    def test_smallest_step_meeting_tau(self):
+        fe = BeamFrontEnd(site=self.site())
+        d = fe.dedicated(self.near, [], t=0.4)
+        base = V.P["ded_prb"] * 12 * V.P["ded_sym"]
+        self.assertEqual(d.info["dedicated_ladder"][0], base)
+        self.assertEqual(d.info["dedicated_ladder"][-1], 32768)
+        self.assertEqual(d.n_re, d.info["dedicated_n_re"])
+        self.assertEqual(d.n_re, d.info["dedicated_ladder"][d.info["dedicated_step"]])
+        self.assertFalse(d.info["dedicated_cap_hit"])
+        self.assertGreaterEqual(d.pd_pred, fe.tau)
+        self.assertGreater(d.info["dedicated_step"], 0)
+        k = d.n_re // base  # slow-time multiple; bandwidth unchanged
+        self.assertEqual(d.bandwidth, V.P["ded_prb"] * 12 * V.P["df"])
+        # the RCS-shift shortcut equals a fixed look of the same size; one step less misses tau
+        fixed = BeamFrontEnd(site=self.site(dedicated_sizing=False,
+                                            extra={"ded_sym": V.P["ded_sym"] * k}))
+        self.assertAlmostEqual(fixed.dedicated(self.near, [], t=0.4).pd_pred, d.pd_pred, places=9)
+        less = BeamFrontEnd(site=self.site(dedicated_sizing=False,
+                                           extra={"ded_sym": V.P["ded_sym"] * k // 2}))
+        self.assertLess(less.dedicated(self.near, [], t=0.4).pd_pred, fe.tau)
+        grants = CL.Scheduler(self.rsu, self.bore, np.random.default_rng(5), n_grants=4).grants(0.4)
+        se = np.mean([next(m for m in V.MCS if m[0] == g.mcs)[2] for g in grants])
+        self.assertAlmostEqual(fe.dedicated(self.near, grants, t=0.4).cost_bits, d.n_re * se)
+
+    def test_cap_flagged(self):
+        fe = BeamFrontEnd(site=self.site())
+        d = fe.dedicated(self.far, [], t=0.4)
+        self.assertTrue(d.info["dedicated_cap_hit"])
+        self.assertEqual(d.n_re, 32768)
+        self.assertLess(d.pd_pred, fe.tau)
+        small = BeamFrontEnd(site=self.site(dedicated_cap_re=1728)).dedicated(self.far, [], t=0.4)
+        self.assertEqual((small.n_re, small.info["dedicated_ladder"]), (1728, [432, 864, 1728]))
+
+    def test_default_unchanged(self):
+        for fe in (BeamFrontEnd(self.rsu, self.bore),
+                   BeamFrontEnd(site=self.site(dedicated_sizing=False))):
+            d = fe.dedicated(self.near, [], t=0.4)
+            self.assertEqual(d.n_re, V.P["ded_prb"] * 12 * V.P["ded_sym"])
+            self.assertNotIn("dedicated_step", d.info)
+        self.assertFalse(self.SiteConfig().dedicated_sizing)
+        self.assertTrue(self.SiteConfig().is_default())
+
+    def test_population_preset(self):
+        pop = RcsPopulation.mimo_v6()
+        np.testing.assert_allclose([pop.mu[c] for c in ("car", "bus", "truck")], [-5.9, 0.1, 0.8],
+                                   atol=1e-9)
+        self.assertAlmostEqual(sum(pop.weight.values()), 1.0)
+        self.assertAlmostEqual(pop.weight["bus"] / pop.weight["car"], 370 / 163)
+        self.assertNotIn("pedestrian", pop.weight)
+        self.assertAlmostEqual(pop.rho_frame, 0.333 ** (0.1 / 1.2))
+        self.assertEqual((pop.omega, pop.frame_dt), (1.7, 0.1))
+        rep = RcsEstimator(pop).report(0.0)  # unknown class: the bus/truck/car mixture
+        self.assertTrue(-5.9 < rep.mean_dbsm < 0.8)
+        self.assertLess(rep.design_dbsm, rep.mean_dbsm)
 
 
 if __name__ == "__main__":

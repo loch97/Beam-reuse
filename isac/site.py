@@ -54,6 +54,12 @@ class SiteConfig:
     Fading: ``speckle_m`` is the Gamma (Nakagami) order of each cell's power for the extended
     model: 1 (None) = Rayleigh speckle, as before; larger = less fluctuation; ``float("inf")`` =
     deterministic cell power (Marcum Q). The paper's point detector stays Swerling 1.
+    Dedicated fallback: ``dedicated_sizing`` True sizes the dedicated look's REs, picking the
+    smallest step of the ladder ded_prb x 12 x ded_sym x 2^k (slow-time doubling at the fixed
+    dedicated PRB width, so bandwidth and resolution do not change) below ``dedicated_cap_re``,
+    then the cap itself, that reaches P_D >= tau; if none does the cap is used and flagged.
+    ``dedicated_cap_re`` None = 32768 (512 subcarriers x 64 slow-time samples, one CPI).
+    False (default) keeps the fixed ded_prb x 12 x ded_sym look of the paper.
     """
 
     rsu_xy: Optional[tuple] = None
@@ -90,6 +96,8 @@ class SiteConfig:
     interference: Optional[bool] = None
     ue_clutter: Optional[bool] = None
     extra: dict = field(default_factory=dict)
+    dedicated_sizing: bool = False
+    dedicated_cap_re: Optional[int] = None
 
     def __post_init__(self):
         for a, b in (("tx_power_dbm", "p_ref_dbm"), ("noise_figure_db", "nf_rx"),
@@ -133,9 +141,11 @@ class SiteConfig:
         own any-cell, pose-averaged event, so it is an approximate calibration: verify it in
         closed loop or refit it against ``BeamDecision.pd_offset_curve``. It is specific to that
         scene, detector and matching rule, hence a preset and not a default.
+        Since round 7 the preset also sizes the dedicated fallback (``dedicated_sizing``, cap
+        32768 REs = one 512 x 64 CPI): a behaviour change of the preset only.
         """
         base = dict(element_pattern=False, pfa=math.exp(-10 ** 1.3), snr_offset_db=19.4,
-                    snr_sigma_db=4.3,
+                    snr_sigma_db=4.3, dedicated_sizing=True, dedicated_cap_re=32768,
                     rcs_prior_dbsm=-1.1,
                     rcs_prior_by_class={"car": -1.1 - (23.7 - 18.9), "bus": -1.1 - (17.7 - 18.9),
                                         "truck": -1.1 - (17.0 - 18.9)})

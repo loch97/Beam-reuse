@@ -127,6 +127,30 @@ class RcsPopulation:
                    FP["rcs_omega0_db"] if omega is None else float(omega), float(rho_frame),
                    _frame_dt() if frame_dt is None else float(frame_dt))
 
+    @classmethod
+    def mimo_v6(cls, frame_dt=0.1):
+        """Population matching ``SiteConfig.mimo_v6`` (local mimo_tracking calibration v6).
+
+        Means: the preset's ``rcs_prior_by_class`` (car -5.9, bus +0.1, truck +0.8 dBsm).
+        sd 2.7 dB: the between-target spread of the paper calibration (tau = 2.45 dB, shrunk to
+        the hyperprior; per-class D bootstraps are not available) combined with about 1 dB of
+        error in each class offset (fitted from 163 to 370 dwells; the pooled D std is 0.6 dB).
+        omega 1.7 dB and the lag-1 correlation 0.333 over 1.2 s are the paper calibration's
+        within-target values; rho_frame is that correlation carried to ``frame_dt`` as an AR(1)
+        process, 0.333 ** (frame_dt / 1.2) = 0.912 at 0.1 s.
+        Weights: the validation dwells (bus 370, truck 344, car 163). Cyclists (27) and
+        pedestrians (14) are left out: they were never detected, so the calibration says nothing
+        about their RCS, and a low mode in an unknown-class mixture would drive every vehicle's
+        design RCS down. A track known to be a VRU should be planned with its own prior.
+        """
+        rho = 0.333 ** (float(frame_dt) / 1.2)
+        priors = {"car": (-1.1 - (23.7 - 18.9), 2.7), "bus": (-1.1 - (17.7 - 18.9), 2.7),
+                  "truck": (-1.1 - (17.0 - 18.9), 2.7)}
+        n = {"bus": 370.0, "truck": 344.0, "car": 163.0}
+        tot = sum(n.values())
+        return cls.from_priors(priors, omega=1.7, rho_frame=rho, frame_dt=frame_dt,
+                               weights={c: v / tot for c, v in n.items()})
+
     def class_weights(self, cls=None):
         if cls in self.mu:
             return {cls: 1.0}
