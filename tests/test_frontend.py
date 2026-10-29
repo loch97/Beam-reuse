@@ -1312,5 +1312,81 @@ class ClutterKernelTests(unittest.TestCase):
         self.assertTrue(np.all(f <= env[j] * (1 + 1e-12)))
 
 
+class PointsAdmissionTests(unittest.TestCase):
+    """Round 9: predicted points on target and the opt-in reuse admission on points."""
+
+    @classmethod
+    def setUpClass(cls):
+        from isac.site import SiteConfig
+
+        CL.configure()
+        cls.SiteConfig = SiteConfig
+        cls.meta, cls.rsu, cls.bore = LS.geometry()
+        cls.grants = CL.Scheduler(cls.rsu, cls.bore, np.random.default_rng(5), n_grants=5).grants(0.4)
+        P = np.diag([0.3, 0.3, 0.2, 0.2])
+        cls.near = TrackReport(0, 0.0, np.array([5.25, -12.0, 0.0, 8.0]), P, (4.73, 1.88))
+        cls.mid = TrackReport(0, 0.0, np.array([5.25, -25.0, 0.0, 8.0]), P, (4.73, 1.88))
+
+    def site(self, **kw):
+        return self.SiteConfig.mimo_v6(rsu_xy=self.rsu, boresight_rad=self.bore, **kw)
+
+    def test_patches_keep_box_power(self):
+        for h in (0.3, 1.57, 2.8, -2.0):
+            keys, xy, sig, dom, _ = TG.box_scatterers((5.0, -20.0), h, 4.73, 1.88, self.rsu, 0.0)
+            pxy, ps = TG.surface_patches((5.0, -20.0), h, 4.73, 1.88, self.rsu)
+            self.assertAlmostEqual(float(np.sum(10 ** (ps / 10))), float(np.sum(10 ** (sig / 10))),
+                                   places=9)
+            self.assertTrue(len(pxy) >= 8)
+
+    def test_points_on_every_decision_and_monotone_in_res(self):
+        fe = BeamFrontEnd(site=self.site(), dedicated_covering=True)
+        d = fe.plan(self.near, self.grants)
+        dd = fe.dedicated(self.near, self.grants)
+        dm = fe.plan_multi(self.near, self.grants, max_grants=2, on_unmet="best_quality")
+        for x in (d, dd, dm):
+            self.assertTrue(np.isfinite(x.exp_points) and x.exp_points > 0)
+            self.assertIn("points_cells", x.info)
+        sig, w = fe.rcs_nodes(fe.default_rcs(self.near))
+        with fe.site.active():
+            pred = fe.prediction(self.near, 0.4)
+            pts = [TG.expected_points([(dd.weights, n, None)], pred, fe.rsu, fe.bore,
+                                      dd.resolution_bw, sig, w)[0] for n in (432, 3456, 32768)]
+        self.assertTrue(pts[0] < pts[1] < pts[2])
+        # without an extent the target is a single reflector: at most a few cells
+        bare = TrackReport(0, 0.0, self.near.x, self.near.P)
+        p0 = BeamFrontEnd(self.rsu, self.bore, target_model="point").plan(bare, self.grants)
+        self.assertTrue(0 <= p0.exp_points <= 4)
+
+    def test_admission(self):
+        off = BeamFrontEnd(site=self.site(), dedicated_covering=True)
+        d0 = off.plan(self.near, self.grants)
+        self.assertEqual(d0.mode, "reuse")
+        self.assertNotIn("points_threshold", d0.info)
+        zero = BeamFrontEnd(site=self.site(min_reuse_points=0.0), dedicated_covering=True)
+        dz = zero.plan(self.near, self.grants)
+        self.assertEqual((dz.mode, dz.grant, dz.tag, dz.pd_pred), (d0.mode, d0.grant, d0.tag, d0.pd_pred))
+        self.assertEqual(dz.info["n_points_rejected"], 0)
+        hard = BeamFrontEnd(site=self.site(min_reuse_points=1e6), dedicated_covering=True)
+        dh = hard.plan(self.near, self.grants)
+        self.assertEqual((dh.mode, dh.info["fallback"]), ("dedicated", "points"))
+        self.assertGreater(dh.info["n_points_rejected"], 0)
+        for kw in (dict(min_reuse_points=3.5), dict(reuse_points_ratio=0.8),
+                   dict(reuse_points_ratio=0.4, reuse_points_ref="cpi")):
+            fe = BeamFrontEnd(site=self.site(**kw), dedicated_covering=True)
+            for tr in (self.near, self.mid):
+                d = fe.plan(tr, self.grants)
+                thr = d.info["points_threshold"]
+                if "reuse_points_ratio" in kw:
+                    self.assertAlmostEqual(thr, kw["reuse_points_ratio"] * d.info["points_ref"])
+                if d.mode == "reuse":
+                    self.assertGreaterEqual(d.exp_points, thr - 1e-9)
+                    self.assertGreaterEqual(d.pd_pred, fe.tau)
+                else:
+                    self.assertEqual(d.info["fallback"], "points")
+        with self.assertRaises(ValueError):
+            BeamFrontEnd(site=self.site(reuse_points_ratio=1.0, reuse_points_ref="x")).plan(
+                self.near, self.grants)
+
+
 if __name__ == "__main__":
     unittest.main()

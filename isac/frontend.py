@@ -56,7 +56,8 @@ from .interfaces import BeamDecision, RcsReport
 from .quadrature import UELossCache
 from .rcs import RcsLook
 from .target import (FP, PoseNodes, box_scatterers, pose_nodes, extended_pd_shifts, cell_snr,
-                     array_gain, pd_upper_bound, focus_snr, fixed_cell_pd_shifts, cell_pd)
+                     array_gain, pd_upper_bound, focus_snr, fixed_cell_pd_shifts, cell_pd,
+                     expected_points)
 from .tracker import heading_of, predict_state, polar_jacobian
 from .detection import delay_power
 
@@ -386,7 +387,7 @@ class BeamFrontEnd:
                    for x, w in zip(10 ** (np.asarray(sigma) / 10), weights))
 
     def _annotate(self, d, pred, parts, bw, sigma, weights):
-        """Fill coverage_db, coverage_gain_dbi and exp_detected_cells of a decision.
+        """Fill coverage_db, coverage_gain_dbi, exp_detected_cells and exp_points of a decision.
 
         ``parts`` = [(W, n_re, clutter)]. Several parts pool by energy: per point,
         sum_i n_re_i G_i / sum_i n_re_i peak_i (coverage_db) and the n_re-weighted mean gain
@@ -408,6 +409,8 @@ class BeamFrontEnd:
             r_, l_, nodes = self._cell_terms(W, pred, n_re, bw, cl)
             rho, leak = rho + r_, leak + l_
         d.exp_detected_cells = float(self.detected_cells(rho, leak, nodes, sigma, weights)[0])
+        d.exp_points, pinfo = expected_points(parts, pred, self.rsu, self.bore, bw, sigma, weights)
+        d.info.update(pinfo)
         d.info["coverage_k"] = self.coverage_k
         if len(parts) > 1:
             d.info["coverage_pooling"] = "energy: sum n_re*G / sum n_re*peak per point"
@@ -594,8 +597,24 @@ class BeamFrontEnd:
           ``SensingRequirement.min_coverage_db`` for "cells subject to coverage".
         These two do not minimise communication cost (it is reported); score differences below
         ``OBJECTIVE_RESOLUTION`` (0.01 dB, 0.01 cells) are ties settled by cost. ``info["binding"]`` lists
-        the constraints that removed candidates ("tau", "min_coverage_db", "requirement").
+        the constraints that removed candidates ("tau", "points", "min_coverage_db", "requirement").
+
+        Reuse admission on points (``SiteConfig.min_reuse_points`` / ``reuse_points_ratio``,
+        opt-in): candidates meeting tau are then checked for predicted points on target; those
+        below the threshold are treated like candidates missing tau. If that leaves no reuse,
+        the dedicated fallback's ``info["fallback"]`` is "points". ``info`` then carries
+        ``points_threshold``, ``points_ref`` (the reference dedicated look's points) and
+        ``n_points_rejected``.
         """
+        adm = {}
+        d = self._plan(track, grants, rcs, t, requirement, return_table, on_unmet, objective, adm)
+        if adm.get("active"):
+            d.info.update(points_threshold=adm.get("thr", float("nan")),
+                          points_ref=adm.get("ref", float("nan")),
+                          n_points_rejected=adm.get("rejected", 0))
+        return d
+
+    def _plan(self, track, grants, rcs, t, requirement, return_table, on_unmet, objective, adm):
         objective = self.objective if objective is None else objective
         if objective not in OBJECTIVES:
             raise ValueError(objective)
@@ -607,6 +626,20 @@ class BeamFrontEnd:
         req = req if req is not None and req.active() else None
         s_q = req.quality_snr_db if req is not None else None
         sigma, weights = self.rcs_nodes(rcs)
+        adm["active"] = self._points_rule() is not None
+
+        def points_ok(ics):
+            """Reuse admission on predicted points, for candidates already meeting tau."""
+            if not adm["active"] or not ics:
+                return ics
+            if "thr" not in adm:
+                adm["thr"], adm["ref"] = self._points_threshold(track, grants, rcs, t, sigma,
+                                                                weights)
+            keep = [ic for ic in ics if self._candidate_points(rows[ic[0]][3], rows[ic[0]][2],
+                                                               ic[1], sigma, weights) >= adm["thr"]]
+            adm["rejected"] = adm.get("rejected", 0) + len(ics) - len(keep)
+            return keep
+
         rows, preds = [], {}
         for i, g in enumerate(grants):
             # one prediction per grant time: grants of a frame share it (and its node caches)
@@ -632,7 +665,8 @@ class BeamFrontEnd:
             tags = [t_ for st in self.stages for t_ in st]
             staged = [(i, c) for i, c in admissible if np.isin(rows[i][3]["tag"][c], tags)]
             n_eval += self._fill_pd(rows, staged, sigma, weights)
-            tau_ok = [ic for ic in staged if pdq(ic) >= self.tau]
+            pass_tau = [ic for ic in staged if pdq(ic) >= self.tau]
+            tau_ok = points_ok(pass_tau)
             self._fill_quality(rows, tau_ok, sigma, weights, s_q)
             self._fill_detected(rows, tau_ok, sigma, weights)
 
@@ -645,7 +679,8 @@ class BeamFrontEnd:
                                                       ev(ic)["q_cells"][ic[1]],
                                                       ev(ic)["q_cov"][ic[1]])]
             other_fail = [ic for ic in tau_ok if ic not in feas and ic not in cov_fail]
-            binding = (["tau"] if len(tau_ok) < len(staged) else []) + (
+            binding = (["tau"] if len(pass_tau) < len(staged) else []) + (
+                ["points"] if len(tau_ok) < len(pass_tau) else []) + (
                 ["min_coverage_db"] if cov_fail else []) + (["requirement"] if other_fail else [])
             stats = dict(objective=objective, binding=binding, n_admissible=len(staged),
                          n_tau=len(tau_ok), n_feasible=len(feas))
@@ -678,7 +713,7 @@ class BeamFrontEnd:
             for cost in sorted(pool):
                 group = pool[cost]
                 n_eval += self._fill_pd(rows, group, sigma, weights)
-                feasible = [ic for ic in group if pdq(ic) >= self.tau]
+                feasible = points_ok([ic for ic in group if pdq(ic) >= self.tau])
                 if feasible and first_pd is None:
                     first_pd = (min(feasible, key=order), cost, stage)
                 if feasible and req is not None:
@@ -701,7 +736,7 @@ class BeamFrontEnd:
             staged = [(i, c) for i, c in admissible
                       if np.isin(rows[i][3]["tag"][c], [t_ for st in self.stages for t_ in st])]
             n_eval += self._fill_pd(rows, staged, sigma, weights)
-            feasible = [ic for ic in staged if pdq(ic) >= self.tau]
+            feasible = points_ok([ic for ic in staged if pdq(ic) >= self.tau])
             self._fill_quality(rows, feasible, sigma, weights, s_q)
             i, c = max(feasible, key=lambda ic: (rows[ic[0]][3]["q_snr"][ic[1]],
                                                  -rows[ic[0]][3]["n_re"] * rows[ic[0]][3]["dse"][ic[1]],
@@ -715,8 +750,41 @@ class BeamFrontEnd:
                                fallback="best_quality")
         d = self.dedicated(track, grants, rcs, t, n_cand, n_eval, requirement=req)
         d.info["fallback"] = "dedicated" if req is not None else "none"
+        if adm.get("rejected") and req is None:
+            d.info["fallback"] = "points"
         d.candidates = self._table(rows, admissible) if return_table else None
         return d
+
+    def _points_rule(self):
+        site = self.site
+        if site is None or (site.min_reuse_points is None and site.reuse_points_ratio is None):
+            return None
+        if site.reuse_points_ref not in ("sized", "cpi"):
+            raise ValueError(site.reuse_points_ref)
+        return site
+
+    def _candidate_points(self, e, pred, c, sigma, weights):
+        """Predicted points on target of reuse candidate c of a grant row (cached)."""
+        cache = e.setdefault("pts", {})
+        if c not in cache:
+            cache[c] = expected_points([(e["W"][c], e["n_re"], e["clutter"])], pred, self.rsu,
+                                       self.bore, e["bw"], sigma, weights)[0]
+        return cache[c]
+
+    def _points_threshold(self, track, grants, rcs, t, sigma, weights):
+        """(threshold, reference points) of the reuse admission on points."""
+        site = self._points_rule()
+        thr, ref = float(site.min_reuse_points or 0.0), float("nan")
+        if site.reuse_points_ratio is not None:
+            d = self.dedicated(track, grants, rcs, t)
+            if site.reuse_points_ref == "cpi":
+                cap = int(site.dedicated_cap_re or 32768)
+                ref = expected_points([(d.weights, cap, None)], self.prediction(track, d.t),
+                                      self.rsu, self.bore, d.resolution_bw, sigma, weights)[0]
+            else:
+                ref = d.exp_points
+            thr = max(thr, float(site.reuse_points_ratio) * ref)
+        return thr, ref
 
     def _reuse(self, rows, i, c, cost, stage, rcs, sigma, weights, req, s_q, n_cand, n_eval,
                rows_table, met, fallback):
@@ -794,6 +862,12 @@ class BeamFrontEnd:
                 snr, cells = self.quality(W, pred, e["n_re"], e["bw"], e["clutter"], sigma,
                                           weights, req.quality_snr_db if req is not None else None)
                 cov = self.coverage_beams(W, self.coverage_points(pred))[0][0]
+                if (round(pd, PD_DECIMALS) >= self.tau and self.meets(req, snr[0], cells[0], cov)
+                        and self._points_rule() is not None):
+                    thr = self._points_threshold(tr, grants, r_k, t, sigma, weights)[0]
+                    if expected_points([(W[0], e["n_re"], e["clutter"])], pred, self.rsu,
+                                       self.bore, e["bw"], sigma, weights)[0] < thr:
+                        continue
                 if round(pd, PD_DECIMALS) >= self.tau and self.meets(req, snr[0], cells[0], cov):
                     if share is None or pd > share[0]:
                         share = (pd, gi, owner, dprev, pred, e, float(snr[0]), float(cells[0]))
@@ -1082,6 +1156,20 @@ class BeamFrontEnd:
             if d.mode == "reuse":
                 d.parts = [self._single_part(d)]
             return d
+        if feasible and self._points_rule() is not None:
+            # reuse admission on points for the chosen set; a set below the threshold falls back
+            # to the single-grant plan, which applies the admission per candidate
+            thr, ref = self._points_threshold(track, grants, rcs, t, sigma, weights)
+            got = expected_points([(pool[a]["e"]["W"][pool[a]["cs"][b]], pool[a]["e"]["n_re"],
+                                    pool[a]["e"]["clutter"]) for a, b in chosen], pred, self.rsu,
+                                  self.bore, bw, sigma, weights)[0]
+            if got < thr:
+                d = self.plan(track, grants, rcs, t, requirement=req, on_unmet=on_unmet,
+                              objective=objective)
+                d.info.update(multi=False, multi_points_rejected=dict(points=got, threshold=thr))
+                if d.mode == "reuse":
+                    d.parts = [self._single_part(d)]
+                return d
         rho = sum(pool[a]["rho"][b] for a, b in chosen)
         leak = sum(pool[a]["leak"][b] for a, b in chosen)
         pd, snr, cells = (v[0] for v in self._combined(rho[None], leak[None], nodes, sigma,

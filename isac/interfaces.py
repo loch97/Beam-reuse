@@ -158,6 +158,7 @@ class BeamDecision:
     coverage_db: float = float("nan")
     coverage_gain_dbi: float = float("nan")
     exp_detected_cells: float = float("nan")
+    exp_points: float = float("nan")
 
 
 @dataclass

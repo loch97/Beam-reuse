@@ -60,6 +60,12 @@ class SiteConfig:
     then the cap itself, that reaches P_D >= tau; if none does the cap is used and flagged.
     ``dedicated_cap_re`` None = 32768 (512 subcarriers x 64 slow-time samples, one CPI).
     False (default) keeps the fixed ded_prb x 12 x ded_sym look of the paper.
+    Reuse admission on points (opt-in; None = off): a reuse candidate that meets P_D >= tau is
+    admitted only if its predicted points on target (``BeamDecision.exp_points``) reach
+    ``min_reuse_points`` and ``reuse_points_ratio`` times the reference dedicated look's points.
+    ``reuse_points_ref``: "sized" = the dedicated fallback as planned (covering and RE sizing as
+    configured); "cpi" = the same beam at the CPI cap (``dedicated_cap_re``, default 32768 REs).
+    Candidates failing it are treated like candidates missing tau.
     """
 
     rsu_xy: Optional[tuple] = None
@@ -98,6 +104,9 @@ class SiteConfig:
     extra: dict = field(default_factory=dict)
     dedicated_sizing: bool = False
     dedicated_cap_re: Optional[int] = None
+    min_reuse_points: Optional[float] = None
+    reuse_points_ratio: Optional[float] = None
+    reuse_points_ref: str = "sized"
 
     def __post_init__(self):
         for a, b in (("tx_power_dbm", "p_ref_dbm"), ("noise_figure_db", "nf_rx"),

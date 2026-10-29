@@ -494,6 +494,143 @@ def _curvature_envelope(lp):
     return _ENVELOPES[lp]
 
 
+# -- expected CLEAN points on the target ----------------------------------------------------------
+POINTS_PATCH_M = 0.25      # patch spacing along a visible face
+POINTS_POSE_NODES = 5      # Gauss-Hermite nodes per principal position axis
+POINTS_HEADING_NODES = 3   # heading nodes when the heading spread is positive
+
+
+def surface_patches(center, heading, L, W, rsu, offsets=None, spacing=POINTS_PATCH_M):
+    """Visible box faces as lines of patches: (xy (P, 2), sigma_dbsm (P,)) for a 0 dBsm
+    dominant scatterer.
+
+    Each visible face carries the power of its box-model scatterers (``box_scatterers``): its
+    centre and half of each corner it shares with another visible face (all of an unshared
+    corner), spread uniformly over patches ``spacing`` apart. The total RCS equals the box
+    model's, so the calibration of the dominant RCS carries over. Empty when no face is visible.
+    """
+    keys, xy, sig, dom, _ = box_scatterers(center, heading, L, W, rsu, 0.0, offsets)
+    if dom is None:
+        return np.zeros((0, 2)), np.zeros(0)
+    pw = dict(zip(keys, 10 ** (np.asarray(sig) / 10)))
+    pos = dict(zip(keys, xy))
+    c = np.asarray(center, float)
+    ex = np.array([math.cos(heading), math.sin(heading)])
+    ey = np.array([-math.sin(heading), math.cos(heading)])
+    faces = {"front": (ex * L / 2, ey * W / 2), "rear": (-ex * L / 2, ey * W / 2),
+             "left": (ey * W / 2, ex * L / 2), "right": (-ey * W / 2, ex * L / 2)}
+    vis = {f: v for f, v in faces.items() if "c_" + f in pw}
+    corner_keys = [k for k in keys if k.startswith("k_")]
+
+    def corners_of(off, half):
+        out = []
+        for sgn in (-1, 1):
+            p_ = c + off + sgn * half
+            out.append(min(corner_keys, key=lambda k: float(np.sum((pos[k] - p_) ** 2))))
+        return out
+
+    share = {k: 0 for k in corner_keys}
+    for off, half in vis.values():
+        for k in corners_of(off, half):
+            share[k] += 1
+    out_xy, out_s = [], []
+    for f, (off, half) in vis.items():
+        power = pw["c_" + f] + sum(pw[k] / share[k] for k in corners_of(off, half))
+        length = 2 * float(np.linalg.norm(half))
+        n = max(1, int(math.ceil(length / spacing)))
+        t = (np.arange(n) + 0.5) / n * 2 - 1
+        out_xy.append(c + off + t[:, None] * half)
+        out_s.append(np.full(n, 10 * math.log10(power / n)))
+    return np.concatenate(out_xy), np.concatenate(out_s)
+
+
+def expected_points(parts, pred, rsu, bore, bandwidth, sigma, weights, lp=None):
+    """Expected number of detected receive-image cells on the target, per call.
+
+    ``parts`` = [(W, n_re, clutter)] (several parts add their energy, as in multi-grant looks).
+    The target is the box's visible surface (``surface_patches``) at each node of a coarse pose
+    quadrature (Gauss-Hermite on the principal position axes, plus heading). Patch returns add
+    in power within the receive image's range x angle resolution cells (range step c / (2 B),
+    angle step 2 / M_rx in u, cells on a fixed grid); each patch falls in its nearest cell, so a
+    single reflector gives at most one point, as CLEAN returns one point per resolved peak. Each cell crosses with ``cell_pd`` at its SNR over noise plus
+    mean UE leakage; the count is averaged over poses and the RCS (and calibration) nodes
+    ``sigma``/``weights``, as P_D is. Without an extent the target is one point.
+    Returns (expected points, info dict). The count saturates at the number of occupied cells;
+    ``info["points_sum_snr_db"]`` (expected SINR summed over the target's cells, dB) does not,
+    and is the companion feature for calibrating against observed CLEAN points.
+    """
+    lp = math.log(V.P["pfa"]) if lp is None else lp
+    x, P = pred["x"], pred["P"]
+    lam, E = np.linalg.eigh(0.5 * (P[:2, :2] + P[:2, :2].T))
+    lam = np.maximum(lam, 0.0)
+    z, wz = np.polynomial.hermite_e.hermegauss(POINTS_POSE_NODES)
+    wz = wz / wz.sum()
+    sh = float(pred.get("heading_std") or 0.0)
+    if sh > 0 and POINTS_HEADING_NODES > 1:
+        zh, wh = np.polynomial.hermite_e.hermegauss(POINTS_HEADING_NODES)
+        wh = wh / wh.sum()
+    else:
+        zh, wh = np.zeros(1), np.ones(1)
+    poses = []
+    for i, a in enumerate(z):
+        for j, b in enumerate(z):
+            xy = x[:2] + E[:, 0] * math.sqrt(lam[0]) * a + E[:, 1] * math.sqrt(lam[1]) * b
+            for k, hz in enumerate(zh):
+                poses.append((xy, pred["heading"] + sh * hz, wz[i] * wz[j] * wh[k]))
+    pts, sig, pw_ = [], [], []
+    for xy, h, w in poses:
+        if pred.get("extent") is not None:
+            pxy, ps = surface_patches(xy, h, *pred["extent"], rsu)
+        else:
+            pxy, ps = np.zeros((0, 2)), np.zeros(0)
+        if not len(pxy):
+            pxy, ps = xy[None], np.zeros(1)
+        pts.append(pxy)
+        sig.append(ps)
+        pw_.append(w)
+    n_p = max(len(p) for p in pts)
+    # pad to a common patch count (padding patches carry no power)
+    XY = np.stack([np.vstack([p, np.repeat(p[-1:], n_p - len(p), 0)]) for p in pts])
+    S = np.stack([np.concatenate([s, np.full(n_p - len(s), -np.inf)]) for s in sig])
+    pw_ = np.asarray(pw_)
+    u, r, th, _ = V.to_polar(XY.reshape(-1, 2), rsu, bore, V.P["rsu_h"], V.P["rc_h"])
+    u, r, th = (a.reshape(XY.shape[:2]) for a in (u, r, th))
+    du, dr = 2.0 / V.P["M_rx"], V.C / (2 * bandwidth)
+    uc = np.arange(math.floor(u.min() / du) - 1, math.ceil(u.max() / du) + 2) * du
+    rc = np.arange(math.floor(r.min() / dr) - 1, math.ceil(r.max() / dr) + 2) * dr
+    UC, RC = (a.ravel() for a in np.meshgrid(uc, rc, indexing="ij"))
+    # each patch's power goes to its nearest resolution cell: CLEAN returns one point per
+    # resolved peak and removes the point-spread sidelobes
+    iu = np.rint(u / du).astype(int) - (math.floor(u.min() / du) - 1)
+    ir = np.rint(r / dr).astype(int) - (math.floor(r.min() / dr) - 1)
+    cell = iu * len(rc) + ir
+    coup = np.zeros(u.shape + (len(UC),))
+    np.put_along_axis(coup, cell[:, :, None], 1.0, axis=2)
+    snr = 0.0
+    leak = 0.0
+    for W, n_re, clutter in parts:
+        W = np.atleast_2d(W)
+        g = array_gain(W, u)[0]
+        rho = np.where(np.isfinite(S), 10 ** (V.rc_snr_db(g, u, r, np.where(np.isfinite(S), S, 0.0),
+                                                         th, n_re) / 10), 0.0)
+        snr = snr + np.einsum("np,npc->nc", rho, coup)
+        if clutter is not None:
+            cu, cr, cs, ct = clutter[:4]
+            cu = np.atleast_1d(cu)
+            cw = np.asarray(clutter[4]) if len(clutter) > 4 else np.ones(len(cu)) / len(cu)
+            cp = 10 ** (V.rc_snr_db(array_gain(W, cu)[0], cu, cr, cs, ct, n_re) / 10)
+            leak = leak + (cp * cw) @ (V.rx_rel(UC[None] - cu[:, None])
+                                       * delay_power(RC[None] - cr, bandwidth))
+    sinr = snr / (1 + leak)
+    sk, wk = np.asarray(sigma, float), np.asarray(weights, float)
+    count = sum(w_ * (cell_pd(10 ** (s_ / 10) * sinr, None, lp).sum(axis=1) @ pw_)
+                for s_, w_ in zip(sk, wk))
+    total = float(wk @ 10 ** (sk / 10)) * float(sinr.sum(axis=1) @ pw_)
+    return float(count), dict(points_cells=int(len(UC)), points_poses=int(len(pw_)),
+                              points_patches=int(n_p), points_du=du, points_dr_m=dr,
+                              points_sum_snr_db=float(10 * np.log10(max(total, 1e-30))))
+
+
 def extended_pd(W, nodes, n_re, bandwidth, clutter=None, focus=None, threshold=None):
     """Uncertainty-averaged P_D of the extended target at the RCS stored in ``nodes``.
 
