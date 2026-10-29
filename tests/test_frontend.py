@@ -1277,6 +1277,29 @@ class ClutterKernelTests(unittest.TestCase):
     def test_speckle_order(self):
         self.check(1.0, m=2.0, seed=5)
 
+    def test_combined_max_sinr_identity(self):
+        """_combined's strongest-cell P_D equals the per-cell max of the original formula."""
+        rng = np.random.default_rng(7)
+        B, N, K = 3, 30, 5
+        rho = 10 ** rng.uniform(-1, 4, (B, N, K))
+        leak = 10 ** rng.uniform(-3, 1, (B, N, K))
+        w = rng.uniform(0, 1, N)
+        nodes = TG.PoseNodes(np.zeros((N, K)), np.zeros((N, K)), np.zeros((N, K)), w / w.sum(),
+                             np.zeros(K), 0, list("abcde"))
+        sigma, weights = np.array([-6.0, 0.0, 4.0]), np.array([0.2, 0.5, 0.3])
+        fe = BeamFrontEnd(*LS.geometry()[1:])
+        lp = math.log(V.P["pfa"])
+        saved = V.P.get("speckle_m")
+        try:
+            for m in (None, 2.0):
+                V.P["speckle_m"] = m
+                ref = sum(wk * (TG.cell_pd(10 ** (sk / 10) * rho, leak, lp).max(axis=2) @ nodes.w)
+                          for sk, wk in zip(sigma, weights))
+                pd = fe._combined(rho, leak, nodes, sigma, weights, None)[0]
+                np.testing.assert_allclose(pd, ref, rtol=0, atol=1e-13)
+        finally:
+            V.P["speckle_m"] = saved
+
     def test_envelope_bounds_curvature(self):
         lp = math.log(2.2e-9)
         edges, env = TG._curvature_envelope(lp)

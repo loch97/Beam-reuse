@@ -313,6 +313,36 @@ When the event likelihood is right:
 - **Weaker evidence.** A detection at P_D 0.95 says little, so the posterior learns mostly from misses and converges more slowly than with cell power. The event likelihood saturates, so it cannot run away as the predicted-cell posterior did.
 - **Calibration spread.** The curve folds in `snr_sigma_db` as an independent per-look spread. Part of the 4.3 dB is persistent target-level variation, which the posterior's target mean and AR(1) aspect term already model. Counting it again per look flattens the curve: the evidence gets weaker and the posterior wider, but its centre is not biased. The planning side is the larger effect: P_D is averaged over the RCS posterior and the full 4.3 dB, so it is too flat and more looks fall to dedicated. Hence 3.2 still holds: use `SiteConfig.mimo_v6(snr_sigma_db=2.9)` (sqrt(4.3² − 3.2²)) with online RCS, and refit it in closed loop. The preset keeps 4.3, since that is your fitted value for planning without online RCS.
 
+#### Eighth-round notes (planning speed with online RCS)
+
+**Where the time went.** With a 6-node RCS posterior the P_D average has 6 × 5 = 30 shifts. A profile of `plan` (mimo_v6) put about 80% of the time in `pd_offset_curve`, the round-6 diagnostic on every reuse decision. It evaluates 40 offsets × 30 shifts = 1230 shifts with the 33-node UE-leakage quadrature. The beam search was a small part. In `plan_multi` the time went to `_combined` and `detected_cells`.
+
+**Changes. Results are unchanged: decisions identical, every numeric field within 2e-14.**
+- `target._clutter_pd` replaces the Python loops over shifts and leakage nodes, vectorised in memory-bounded chunks (`CHUNK_ELEMS`). For Rayleigh speckle the leakage average Σ_q w_q f(L_q) is replaced by f(mean L) wherever a rigorous bound puts the difference below `CLUTTER_EPS`/2 = 5e-14:
+  - the second-order Taylor bound uses |f''| ≤ e^{lp/(1+y)} (lp² g₁² + 2|lp| y/(1+y)³), g₁ = y/(1+y)², valid for every L ≥ 0;
+  - a per-cell SNR window, from a monotone-piece envelope of that bound on a log grid, decides which elements need the exact bound;
+  - a cell whose upper bound is below another cell's lower bound cannot be the strongest and is not refined.
+
+  Only the remaining elements evaluate the quadrature. With the weak leakage of `mimo_v6` almost none do; with strong leakage (paper link budget, near the UE) about 20% do. Other speckle orders evaluate the quadrature everywhere.
+- `_combined` (plan_multi, multi-grant event curve): `cell_pd` depends on (ρ, L) only through ρ/(1+L) and increases with it, so the strongest cell's P_D is P_D at the largest per-cell SINR. That is one evaluation per pose node instead of one per cell, plus a strided max. `detected_cells` is computed only for `objective="quality"`, the only objective whose score uses it.
+- `extended_pd_shifts(need_upper=False)` skips the clutter-free bound when nothing uses it.
+- Exact caches: the steering matrix on `PoseNodes` (`node_gain`), and one `prediction` per grant time in `plan`.
+
+**Timing.** Single thread, same scenarios old vs new (`plan`, `plan_multi` with `max_grants=2`, `dedicated`; paper, `mimo_v6` and a strong-leakage calibrated site; scatterer and event evidence; 6-node posterior and point RCS):
+- mimo_v6: 72 decisions, 1829 s → 187 s (9.8×); `plan` 29.7 → 12.0 s (2.5×); `plan_multi` median 50 → 7.7 s, worst 235 → 17 s;
+- strong-leakage site: 60 decisions, 1068 s → 419 s (2.5×). The leakage quadrature is genuinely needed there, because most candidates of a cost group are feasible and `plan` picks the highest P_D among them;
+- paper defaults: 18 decisions, 140 s → 95 s.
+
+At 5 vs 30 shifts on mimo_v6, `plan` now takes 0.63/0.10/0.31/0.10 s vs 0.94/0.15/0.61/0.12 s on four scenarios (old: 2.0/0.17/0.58/0.15 vs 5.3/0.27/4.4/0.17 s), so online RCS now costs about 1.5× rather than 4.6×. The event curve (61 grid × calibration nodes) and the sized dedicated ladder use the same kernel, so request 5 comes with it.
+
+**Not done: requests 2–4 (shift compression, certified screening, shadow mode).**
+- They would approximate a path that is now mostly shift-independent: at 30 shifts the shift-proportional part is about 40% of a mimo_v6 `plan`, so K-node compression could save at most part of that.
+- Certified acceptance cannot skip exact values in this planner. Within a cost group `plan` takes the feasible candidate with the highest (12-decimal) P_D, so every feasible candidate's value is needed.
+- Certified rejection already exists (`pd_upper_bound`, then the clutter-free screen). A tighter minimum-leakage bound was tried on the strong-leakage site and rejected 5 more of 162 beams, while 118 were truly feasible.
+- A shadow mode would compare the fast path against itself: the change is exact, so compare `pd_pred` against an older pin directly.
+
+If your profile still shows planning as the bottleneck at this commit, send it (per-function `cProfile` of one world) and I will target what remains.
+
 ### Extended target in the paper pipeline and RT check
 
 `python -m isac.simulate --target-model extended` runs the paper conditions with the multi-scatterer box in place of the point detector (`target.ExtendedDetector`), paired by seed block with the point model, and writes to `outputs/simulation_extended/`. The paper's effective RCS prior is kept: the dominant scatterer is lowered by the box's own contribution at the full-band reference cell (0–1.3 dB per frame), so the two models agree at that cell.

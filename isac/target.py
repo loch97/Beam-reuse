@@ -416,38 +416,57 @@ def _clutter_pd(scale, rho, cp, resp, cw, wn, lp):
     step = max(1, CHUNK_ELEMS // len(cwq))
 
     def chunk(x):
-        vals, windows = [], []
+        # per cell slice k: the mean-leak value for every element, then for elements inside
+        # their window the Taylor bound (gathered when the window is sparse, dense otherwise)
+        vals, bounds = [], []
         for k in range(K):
             y = x[:, None] * rk[k][None]
-            vals.append(wsum * cell_pd(y, lk[k][None], lp))
+            v = wsum * cell_pd(y, lk[k][None], lp)
+            vals.append(v)
             if not open_k[k]:
-                windows.append(None)
+                bounds.append(None)
                 continue
-            s_, c_ = np.nonzero((y >= lo_k[k][None]) & (y <= hi_k[k][None]))
-            yy = y[s_, c_]
+            win = (y >= lo_k[k][None]) & (y <= hi_k[k][None])
+            if win.mean() > 0.5:
+                yy, idx = y, None
+            else:
+                idx = np.nonzero(win)
+                yy = y[idx]
             e = np.exp(lp / (1 + yy))
             g1 = yy / (1 + yy) ** 2
-            bnd = e * (lp * lp * g1 * g1 + abs(lp) * 2 * g1 / (1 + yy)) * hv_k[k][c_]
-            windows.append((s_, c_, yy, e, bnd))
-        if not any(w is not None and len(w[0]) for w in windows):
+            hv = hv_k[k][None] if idx is None else hv_k[k][idx[1]]
+            bnd = e * (lp * lp * g1 * g1 + abs(lp) * 2 * g1 / (1 + yy)) * hv
+            bounds.append((idx, yy, e, bnd))
+        if all(bd is None for bd in bounds):
             return np.maximum.reduce(vals).reshape(len(x), B, N) @ wn
         low = [v - CLUTTER_EPS / 2 for v in vals]
-        for k, w in enumerate(windows):
-            if w is not None:
-                low[k][w[0], w[1]] = vals[k][w[0], w[1]] - w[4]
-        lower = np.maximum.reduce(low)
-        for k, w in enumerate(windows):
-            if w is None or not len(w[0]):
+        for k, bd in enumerate(bounds):
+            if bd is None:
                 continue
-            s_, c_, yy, e, bnd = w
-            v = vals[k][s_, c_]
-            sel = np.flatnonzero((bnd > CLUTTER_EPS / 2)
-                                 & (np.minimum(wsum * e, v + bnd) >= lower[s_, c_]))
-            for i in range(0, len(sel), step):
-                j = sel[i:i + step]
+            idx, _, _, bnd = bd
+            if idx is None:
+                np.minimum(low[k], vals[k] - bnd, out=low[k])
+            else:
+                low[k][idx] = np.minimum(low[k][idx], vals[k][idx] - bnd)
+        lower = np.maximum.reduce(low)
+        for k, bd in enumerate(bounds):
+            if bd is None:
+                continue
+            idx, yy, e, bnd = bd
+            v = vals[k] if idx is None else vals[k][idx]
+            lw = lower if idx is None else lower[idx]
+            need = (bnd > CLUTTER_EPS / 2) & (np.minimum(wsum * e, v + bnd) >= lw)
+            if idx is None:
+                s_, c_ = np.nonzero(need)
+                ys = yy[s_, c_]
+            else:
+                sel = np.flatnonzero(need)
+                s_, c_, ys = idx[0][sel], idx[1][sel], yy[sel]
+            for i in range(0, len(s_), step):
+                j = slice(i, i + step)
                 b_, n_ = np.divmod(c_[j], N)
                 leak = cp[b_] * respT[n_ * K + k]
-                vals[k][s_[j], c_[j]] = cell_pd(yy[j][:, None], leak, lp) @ cwq
+                vals[k][s_[j], c_[j]] = cell_pd(ys[j][:, None], leak, lp) @ cwq
         return np.maximum.reduce(vals).reshape(len(x), B, N) @ wn
 
     return _chunked_shifts(scale, 2 * rho.size, chunk)

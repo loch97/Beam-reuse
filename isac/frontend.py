@@ -379,7 +379,10 @@ class BeamFrontEnd:
         with the mean UE leakage."""
         lp = math.log(V.P["pfa"])
         sinr = rho / (1 + leak)
-        return sum(w * (cell_pd(x * sinr, None, lp).sum(axis=2) @ nodes.w)
+        B, N, K = sinr.shape
+        flat = sinr.reshape(B, N * K)
+        wk = np.repeat(nodes.w, K)  # sum over cells and pose nodes as one contraction
+        return sum(w * (cell_pd(x * flat, None, lp) @ wk)
                    for x, w in zip(10 ** (np.asarray(sigma) / 10), weights))
 
     def _annotate(self, d, pred, parts, bw, sigma, weights):
@@ -852,14 +855,20 @@ class BeamFrontEnd:
         """P_D, strongest-cell SNR (dB) and cell count for summed cell SNRs: rho, leak (B, N, K)."""
         lp = math.log(V.P["pfa"])
         sinr = rho / (1 + leak)
-        snr = 10 * np.log10(np.maximum(sinr, 1e-30)).max(axis=2) @ nodes.w + float(weights @ sigma)
+        # cell_pd depends on (rho, leak) only through rho / (1 + leak) and increases with it, so
+        # the strongest cell's P_D is P_D at the largest per-cell SINR: one evaluation per node
+        smax = sinr.max(axis=2)
+        snr = 10 * np.log10(np.maximum(smax, 1e-30)) @ nodes.w + float(weights @ sigma)
         pd = np.zeros(len(rho))
         cells = np.zeros(len(rho)) if s_q is not None else np.full(len(rho), np.nan)
+        if s_q is not None:
+            B, N, K = sinr.shape
+            flat = sinr.reshape(B, N * K)
+            wk = np.repeat(nodes.w, K)
         for x, w in zip(10 ** (sigma / 10), weights):
-            pd += w * (cell_pd(x * rho, leak, lp).max(axis=2) @ nodes.w)
+            pd += w * (cell_pd(x * smax, None, lp) @ nodes.w)
             if s_q is not None:
-                cells += w * ((10 * np.log10(np.maximum(x * sinr, 1e-30)) >= s_q).sum(axis=2)
-                              @ nodes.w)
+                cells += w * ((10 * np.log10(np.maximum(x * flat, 1e-30)) >= s_q) @ wk)
         return pd, snr, cells
 
     @_in_site
@@ -944,7 +953,9 @@ class BeamFrontEnd:
             """P_D, strongest-cell SNR, quality cells, pooled coverage (dB), detected cells."""
             pd, snr, cells = self._combined(rho, leak, nodes, sigma, weights, s_q)
             cov = 10 * np.log10(np.maximum((gsum / psum[:, None]).min(axis=1), 1e-30))
-            det = self.detected_cells(rho, leak, nodes, sigma, weights)
+            # detected cells only enter the "quality" objective's score
+            det = (self.detected_cells(rho, leak, nodes, sigma, weights)
+                   if objective == "quality" else None)
             return pd, snr, cells, cov, det
 
         def ok(pd, snr, cells, cov):
