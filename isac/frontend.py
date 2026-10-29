@@ -253,7 +253,7 @@ class BeamFrontEnd:
         sigma = np.atleast_1d(sigma)
         if "nodes" in pred:
             return extended_pd_shifts(W, pred["nodes"], n_re, bandwidth, clutter,
-                                      shifts_db=sigma, screen=screen)[0]
+                                      shifts_db=sigma, screen=screen, need_upper=False)[0]
         kw = dict(s_r=pred["s_r"], c_ur=pred["c_ur"])
         out = []
         for s in sigma:
@@ -604,9 +604,12 @@ class BeamFrontEnd:
         req = req if req is not None and req.active() else None
         s_q = req.quality_snr_db if req is not None else None
         sigma, weights = self.rcs_nodes(rcs)
-        rows = []
+        rows, preds = [], {}
         for i, g in enumerate(grants):
-            pred = self.prediction(track, g.t)
+            # one prediction per grant time: grants of a frame share it (and its node caches)
+            pred = preds.get(g.t)
+            if pred is None:
+                pred = preds[g.t] = self.prediction(track, g.t)
             rows.append((i, g, pred, self.evaluate_grant(g, pred)))
         n_cand = sum(int(e["ok"].sum()) for *_, e in rows)
         n_eval = 0

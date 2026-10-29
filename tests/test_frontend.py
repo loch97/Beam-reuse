@@ -1229,5 +1229,63 @@ class EventEvidenceTests(unittest.TestCase):
                                                                     d1.pd_pred))
 
 
+class ClutterKernelTests(unittest.TestCase):
+    """Round 8: the bounded clutter-average kernel against the brute-force quadrature."""
+
+    @staticmethod
+    def brute(scale, rho, cp, resp, cw, wn, lp):
+        out = np.zeros((len(scale), len(rho)))
+        for i, x in enumerate(scale):
+            pd = np.zeros(rho.shape)
+            for q in range(len(cw)):
+                pd += cw[q] * TG.cell_pd(x * rho, cp[:, q, None, None] * resp[q][None], lp)
+            out[i] = pd.max(axis=2) @ wn
+        return out
+
+    def check(self, leak_scale, m=None, wsum=1.0, seed=0):
+        rng = np.random.default_rng(seed)
+        B, N, K, Q = 3, 40, 4, 7
+        rho = 10 ** rng.uniform(-1, 4, (B, N, K))
+        cp = 10 ** rng.uniform(-2, 1, (B, Q)) * leak_scale
+        resp = rng.uniform(0, 1, (Q, N, K))
+        cw = rng.uniform(0.1, 1, Q)
+        cw *= wsum / cw.sum()
+        wn = rng.uniform(0, 1, N)
+        wn /= wn.sum()
+        scale = 10 ** (np.linspace(-30, 20, 23) / 10)
+        lp = math.log(2.2e-9)
+        saved = V.P.get("speckle_m")
+        V.P["speckle_m"] = m
+        try:
+            a = self.brute(scale, rho, cp, resp, cw, wn, lp)
+            b = TG._clutter_pd(scale, rho, cp, resp, cw, wn, lp)
+        finally:
+            V.P["speckle_m"] = saved
+        self.assertLess(np.abs(a - b).max(), TG.CLUTTER_EPS)
+
+    def test_tiny_leak(self):
+        self.check(1e-8)
+
+    def test_large_leak_uses_quadrature(self):
+        self.check(1.0, seed=1)
+        self.check(30.0, seed=2)
+
+    def test_unnormalised_weights(self):
+        self.check(1e-3, wsum=0.7, seed=3)
+        self.check(1.0, wsum=1.3, seed=4)
+
+    def test_speckle_order(self):
+        self.check(1.0, m=2.0, seed=5)
+
+    def test_envelope_bounds_curvature(self):
+        lp = math.log(2.2e-9)
+        edges, env = TG._curvature_envelope(lp)
+        y = np.concatenate([np.logspace(-5, 9, 20001), [0.0]])
+        g1, h = y / (1 + y) ** 2, y / (1 + y) ** 3
+        f = np.exp(lp / (1 + y)) * (lp * lp * g1 ** 2 + abs(lp) * 2 * h)
+        j = np.minimum(np.searchsorted(edges, y, side="right") - 1, len(env) - 1)
+        self.assertTrue(np.all(f <= env[j] * (1 + 1e-12)))
+
+
 if __name__ == "__main__":
     unittest.main()

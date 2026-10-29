@@ -13,7 +13,7 @@ The receiver tests the cells of every scatterer, and P_D = E[max_c P_D,c] is a l
 probability that at least one cell detects. ``focus="dominant"`` tests the dominant cell only.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import json
 import math
@@ -90,6 +90,7 @@ class PoseNodes:
     sigma_dbsm: np.ndarray
     dom: int
     keys: list
+    steer: dict = field(default_factory=dict, repr=False, compare=False)
 
 
 def _axis_nodes(n, zmax):
@@ -164,9 +165,19 @@ def array_gain(W, u):
     return np.abs(np.tensordot(W, A, axes=([1], [-1]))) ** 2 / V.M
 
 
+def node_gain(W, nodes):
+    """``array_gain(W, nodes.u)`` with the steering matrix cached on ``nodes`` (per array size)."""
+    W = np.atleast_2d(W)
+    A = nodes.steer.get(V.M)
+    if A is None:
+        A = nodes.steer[V.M] = np.exp(1j * np.pi * np.multiply.outer(np.asarray(nodes.u, float),
+                                                                     V.N_IDX))
+    return np.abs(np.tensordot(W, A, axes=([1], [-1]))) ** 2 / V.M
+
+
 def cell_snr(W, nodes, n_re, bandwidth):
     """Mean SNR in each scatterer's receive cell: (beams, nodes, cells), linear."""
-    tx = array_gain(W, nodes.u)
+    tx = node_gain(W, nodes)
     rho = 10 ** (V.rc_snr_db(tx, nodes.u, nodes.r, nodes.sigma_dbsm, nodes.theta, n_re) / 10)
     du = nodes.u[:, :, None] - nodes.u[:, None, :]
     dr = nodes.r[:, :, None] - nodes.r[:, None, :]
@@ -284,7 +295,7 @@ def fixed_cell_pd_shifts(W, nodes, n_re, bandwidth, u0, r0, clutter=None, shifts
 
 
 def extended_pd_shifts(W, nodes, n_re, bandwidth, clutter=None, focus=None, shifts_db=(0.0,),
-                       screen=None, rho=None):
+                       screen=None, rho=None, need_upper=True):
     """P_D of the extended target for each RCS shift and beam: arrays (shifts, beams).
 
     Every scatterer RCS in ``nodes`` moves by the same shift (dB), so a shift evaluates the target
@@ -293,7 +304,8 @@ def extended_pd_shifts(W, nodes, n_re, bandwidth, clutter=None, focus=None, shif
     elevation ``ct``. ``screen`` = (threshold, shift weights): beams whose shift-averaged
     clutter-free value (an upper bound) is below the threshold skip the clutter evaluation and
     return -1. ``rho`` passes precomputed ``cell_snr(W, nodes, n_re, bandwidth)``.
-    Returns (pd, clutter-free pd).
+    Returns (pd, clutter-free pd). ``need_upper=False`` skips the clutter-free value when clutter
+    is given and there is no screen; it is then returned as None.
     """
     focus = FP["ext_focus"] if focus is None else focus
     W = np.atleast_2d(W)
@@ -308,14 +320,19 @@ def extended_pd_shifts(W, nodes, n_re, bandwidth, clutter=None, focus=None, shif
     else:
         raise ValueError(focus)
     best = rho.max(axis=2)
-    upper = np.stack([cell_pd(x * best, None, lp) @ nodes.w for x in scale])
+    if clutter is not None and screen is None and not need_upper:
+        upper = None
+    else:
+        upper = _chunked_shifts(scale, best.size,
+                                lambda x: cell_pd(x[:, None, None] * best[None], None, lp)
+                                @ nodes.w)
     if clutter is None:
         return upper, upper
     active = np.arange(len(W))
     if screen is not None:
         threshold, weights = screen
         active = np.flatnonzero(np.asarray(weights) @ upper >= threshold - 1e-11)
-    out = np.full(upper.shape, -1.0)
+    out = np.full((len(scale), len(W)), -1.0)
     if not len(active):
         return out, upper
     rho = rho[active]
@@ -324,13 +341,138 @@ def extended_pd_shifts(W, nodes, n_re, bandwidth, clutter=None, focus=None, shif
     cw = np.asarray(clutter[4]) if len(clutter) > 4 else np.ones(len(cu)) / len(cu)
     cp = 10 ** (V.rc_snr_db(array_gain(W[active], cu), cu, cr, cs, ct, n_re) / 10)
     resp = V.rx_rel(cu_nodes[None] - cu[:, None, None]) * delay_power(cr_nodes - cr, bandwidth)
-    for i, x in enumerate(scale):
-        pd = np.zeros(rho.shape)
-        for q in range(len(cu)):
-            leak = cp[:, q, None, None] * resp[q][None]
-            pd += cw[q] * cell_pd(x * rho, leak, lp)
-        out[i, active] = pd.max(axis=2) @ nodes.w
+    out[:, active] = _clutter_pd(scale, rho, cp, resp, cw, nodes.w, lp)
     return out, upper
+
+
+# Chunk sizes of the vectorised P_D kernels (elements per temporary array).
+CHUNK_ELEMS = 2_000_000
+# Per-cell tolerance of the bracketed clutter average; the result moves by at most half of it.
+CLUTTER_EPS = 1e-13
+
+
+def _chunked_shifts(scale, per_shift, fn):
+    """Stack fn(scale chunk) over shift chunks of at most CHUNK_ELEMS elements."""
+    step = max(1, CHUNK_ELEMS // max(int(per_shift), 1))
+    return np.concatenate([fn(scale[i:i + step]) for i in range(0, len(scale), step)])
+
+
+def _clutter_pd(scale, rho, cp, resp, cw, wn, lp):
+    """Clutter-averaged any-cell P_D: array (shifts, beams).
+
+    Equals, for every shift x, sum_n wn max_k sum_q cw_q cell_pd(x rho, L_q) with
+    L_q = cp_q resp_q (rho (B, N, K), cp (B, Q), resp (Q, N, K)) to within CLUTTER_EPS / 2.
+    The quadrature over the UE-leakage nodes q is the cost. For Rayleigh speckle it is replaced by
+    f(mean L), with f(L) = exp(lp (1 + L) / (1 + L + y)) and y = x rho, wherever the Taylor
+    remainder bound proves it close:
+        |sum_q cw_q f(L_q) - sum_q cw_q f(mean L)| <= sum_q cw_q Var_q(L) max|f''| / 2,
+        |f''| <= f(0) (lp^2 g1^2 + |lp| g2), g1 = y / (1 + y)^2, g2 = 2 y / (1 + y)^3, all L >= 0.
+    The mean-leak value +- that bound brackets the exact value; a cell whose upper bound is below
+    another cell's lower bound cannot be the maximum and is not refined. Only cells whose bound
+    exceeds CLUTTER_EPS / 2 and that can be the maximum evaluate the quadrature. Other speckle
+    orders evaluate the quadrature everywhere.
+    """
+    B, N, K = rho.shape
+    cwq = np.asarray(cw, float)
+    wsum = float(cwq.sum())
+    cwn = cwq / wsum
+    lbar, lvar = np.empty(rho.shape), np.empty(rho.shape)
+    for b in range(B):
+        L = cp[b][:, None, None] * resp
+        lbar[b] = np.tensordot(cwn, L, 1)
+        lvar[b] = np.tensordot(cwn, (L - lbar[b]) ** 2, 1)
+    respT = resp.reshape(len(cwq), N * K).T
+    m = V.P.get("speckle_m")
+    if m is not None and m != 1:
+        def exact(x):
+            pd = np.zeros((len(x),) + rho.shape)
+            for q in range(len(cwq)):
+                leak = cp[:, q, None, None] * resp[q][None]
+                pd += cwq[q] * cell_pd(x[:, None, None, None] * rho[None], leak[None], lp)
+            return pd.max(axis=-1) @ wn
+
+        return _chunked_shifts(scale, 2 * rho.size, exact)
+    half_var = 0.5 * wsum * lvar
+    # Per cell, the SNR window [ylo, yhi] outside which the Taylor bound is below
+    # CLUTTER_EPS / 2 (from a rigorous envelope of |f''| on a log grid of y); elements outside
+    # their window use f(mean L) directly. Cells as contiguous (beam, node) slices so the max
+    # over cells is elementwise.
+    edges, env = _curvature_envelope(lp)
+    thr = CLUTTER_EPS / 2 / np.maximum(half_var, 1e-300)
+    left = np.maximum.accumulate(env)
+    right = np.maximum.accumulate(env[::-1])[::-1]
+    j0 = np.searchsorted(left, thr, side="right")  # first interval with env > thr
+    j1 = len(env) - np.searchsorted(right[::-1], thr, side="right") - 1  # last such interval
+    is_open = j0 < len(env)
+    ylo = np.where(is_open, edges[np.minimum(j0, len(env) - 1)], np.inf)
+    yhi = np.where(is_open, edges[np.clip(j1 + 1, 0, len(edges) - 1)], -np.inf)
+    yhi = np.where(is_open & (j1 == len(env) - 1), np.inf, yhi)
+    rk = [np.ascontiguousarray(rho[:, :, k]).ravel() for k in range(K)]
+    lk = [np.ascontiguousarray(lbar[:, :, k]).ravel() for k in range(K)]
+    lo_k = [np.ascontiguousarray(ylo[:, :, k]).ravel() for k in range(K)]
+    hi_k = [np.ascontiguousarray(yhi[:, :, k]).ravel() for k in range(K)]
+    hv_k = [np.ascontiguousarray(half_var[:, :, k]).ravel() for k in range(K)]
+    open_k = [bool(np.any(np.isfinite(lo))) for lo in lo_k]
+    step = max(1, CHUNK_ELEMS // len(cwq))
+
+    def chunk(x):
+        vals, windows = [], []
+        for k in range(K):
+            y = x[:, None] * rk[k][None]
+            vals.append(wsum * cell_pd(y, lk[k][None], lp))
+            if not open_k[k]:
+                windows.append(None)
+                continue
+            s_, c_ = np.nonzero((y >= lo_k[k][None]) & (y <= hi_k[k][None]))
+            yy = y[s_, c_]
+            e = np.exp(lp / (1 + yy))
+            g1 = yy / (1 + yy) ** 2
+            bnd = e * (lp * lp * g1 * g1 + abs(lp) * 2 * g1 / (1 + yy)) * hv_k[k][c_]
+            windows.append((s_, c_, yy, e, bnd))
+        if not any(w is not None and len(w[0]) for w in windows):
+            return np.maximum.reduce(vals).reshape(len(x), B, N) @ wn
+        low = [v - CLUTTER_EPS / 2 for v in vals]
+        for k, w in enumerate(windows):
+            if w is not None:
+                low[k][w[0], w[1]] = vals[k][w[0], w[1]] - w[4]
+        lower = np.maximum.reduce(low)
+        for k, w in enumerate(windows):
+            if w is None or not len(w[0]):
+                continue
+            s_, c_, yy, e, bnd = w
+            v = vals[k][s_, c_]
+            sel = np.flatnonzero((bnd > CLUTTER_EPS / 2)
+                                 & (np.minimum(wsum * e, v + bnd) >= lower[s_, c_]))
+            for i in range(0, len(sel), step):
+                j = sel[i:i + step]
+                b_, n_ = np.divmod(c_[j], N)
+                leak = cp[b_] * respT[n_ * K + k]
+                vals[k][s_[j], c_[j]] = cell_pd(yy[j][:, None], leak, lp) @ cwq
+        return np.maximum.reduce(vals).reshape(len(x), B, N) @ wn
+
+    return _chunked_shifts(scale, 2 * rho.size, chunk)
+
+
+_ENVELOPES = {}
+
+
+def _curvature_envelope(lp):
+    """Grid edges and, per interval, an upper bound of exp(lp/(1+y)) (lp^2 g1^2 + 2|lp| h) with
+    g1 = y/(1+y)^2, h = y/(1+y)^3 over that interval of y (last interval: to infinity).
+
+    exp(lp/(1+y)) increases in y; g1 peaks at y = 1 and h at y = 1/2, so each factor's maximum
+    over [a, b] is at b or at the clipped peak.
+    """
+    if lp not in _ENVELOPES:
+        edges = np.concatenate([[0.0], np.logspace(-4, 8, 481)])
+        a, b = edges[:-1], edges[1:]
+        g1 = lambda y: y / (1 + y) ** 2
+        h = lambda y: y / (1 + y) ** 3
+        g1m, hm = g1(np.clip(1.0, a, b)), h(np.clip(0.5, a, b))
+        env = np.exp(lp / (1 + b)) * (lp * lp * g1m ** 2 + abs(lp) * 2 * hm)
+        tail = lp * lp * g1(edges[-1]) ** 2 + abs(lp) * 2 * h(edges[-1])
+        _ENVELOPES[lp] = (edges, np.append(env, tail))
+    return _ENVELOPES[lp]
 
 
 def extended_pd(W, nodes, n_re, bandwidth, clutter=None, focus=None, threshold=None):
