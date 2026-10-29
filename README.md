@@ -343,6 +343,48 @@ At 5 vs 30 shifts on mimo_v6, `plan` now takes 0.63/0.10/0.31/0.10 s vs 0.94/0.1
 
 If your profile still shows planning as the bottleneck at this commit, send it (per-function `cProfile` of one world) and I will target what remains.
 
+#### Ninth-round notes (predicted points on target, reuse admission on points)
+
+**Predicted points on target (`BeamDecision.exp_points`, every decision).** This is the expected number of detected receive-image cells on the target, built from the same RCS and calibration nodes as P_D (`target.expected_points`):
+- The visible box faces become lines of patches 0.25 m apart (`surface_patches`). Each face carries the power of its box-model scatterers, so the total RCS and the calibration of the dominant RCS are unchanged.
+- At each node of a coarse pose quadrature (5 × 5 positions, 3 headings), each patch's return goes into its nearest range × angle resolution cell: c/2B in range (0.79 m at 190.08 MHz), 2/M_rx in u. Powers within a cell add. CLEAN returns one point per resolved peak and removes the point-spread sidelobes, so a single reflector gives at most one point.
+- Each cell crosses with `cell_pd` at its SNR over noise plus mean UE leakage. Parts add energy, as in multi-grant looks.
+
+`info` carries the grid (`points_cells`, `points_du`, `points_dr_m`) and `points_sum_snr_db`, the expected SINR summed over the target's cells.
+
+The count saturates at the number of cells the visible box occupies: about 6–7 at 12 m and about 4 at 38 m at full CPI. Your 51 points at 0–20 m exceed that, which suggests CLEAN extracts several components per cell as SNR grows. So calibrate observed points against both `exp_points` and `points_sum_snr_db`; the second does not saturate. The model's relative behaviour (local, mimo_v6, covering dedicated beam, at 12 / 25 / 38 m):
+- Reuse looks (grants of 288–4608 REs): about 2.7–4.0 points.
+- The same dedicated beam at 432 / 1728 / 6912 / 32768 REs: 1.6 / 3.5 / 5.2 / 6.1 points at 12 m, and 0.1 / 0.6 / 1.8 / 4.0 at 38 m.
+- So reuse reaches 0.6–0.8 of the τ-sized dedicated look but 0.3–0.45 of the full-CPI look. The second matches your 0.2–0.3 against dedicated tracking (full CPI).
+
+**Reuse admission on points (opt-in; `SiteConfig.min_reuse_points`, `reuse_points_ratio`, `reuse_points_ref`).**
+- Only candidates that meet P_D ≥ τ are checked, so points are computed only for them (request 4). A candidate below the threshold is treated like one missing τ, and the search goes on to the next one.
+- Threshold = max(`min_reuse_points`, `reuse_points_ratio` × reference), where the reference is the dedicated look's `exp_points`:
+  - `"sized"`: the fallback as planned (covering and RE sizing as configured), as you asked;
+  - `"cpi"`: the same beam at the CPI cap.
+
+  Because the sized fallback just meets τ, `"sized"` ratios bite only above about 0.6; `"cpi"` is the reference closer to your dedicated-tracking baseline.
+- A dedicated fallback caused by the rule has `info["fallback"] = "points"`. `info` also logs `points_threshold`, `points_ref` and `n_points_rejected`.
+- The rule applies in `plan` (all objectives and `on_unmet` paths), in `plan_multi` (to the chosen set; a failing set falls back to single-grant `plan`) and in `plan_frame`'s grant sharing.
+- Cost: about 50 ms per candidate checked, plus one dedicated reference per decision.
+
+**Cost of the admission (request 3).** Local static set: mimo_v6, `dedicated_covering=True`, design RCS by default, 8 grant draws × 9 ranges (8–45 m along the road) = 72 looks per setting. "dedicated REs / look" averages over all looks (0 for reuse). Reuse shares by RX range band, with the number of looks in brackets:
+
+| setting | reuse share (all) | 0-20 m | 20-30 m | 30-45 m | dedicated REs / look | E[points] of chosen look | points fallbacks |
+|---|---|---|---|---|---|---|---|
+| off | 0.39 | 0.81 (32) | 0.08 (24) | 0.00 (16) | 12946 | 3.47 | 0 |
+| k2 | 0.31 | 0.62 (32) | 0.08 (24) | 0.00 (16) | 13090 | 3.49 | 6 |
+| k3 | 0.15 | 0.34 (32) | 0.00 (24) | 0.00 (16) | 14002 | 3.86 | 17 |
+| k4 | 0.01 | 0.03 (32) | 0.00 (24) | 0.00 (16) | 14674 | 4.11 | 27 |
+| sized0.6 | 0.25 | 0.56 (32) | 0.00 (24) | 0.00 (16) | 13954 | 3.89 | 10 |
+| sized0.8 | 0.12 | 0.28 (32) | 0.00 (24) | 0.00 (16) | 14530 | 4.11 | 19 |
+| sized1.0 | 0.11 | 0.25 (32) | 0.00 (24) | 0.00 (16) | 14578 | 4.15 | 20 |
+| cpi0.3 | 0.39 | 0.81 (32) | 0.08 (24) | 0.00 (16) | 12946 | 3.47 | 0 |
+| cpi0.4 | 0.31 | 0.66 (32) | 0.04 (24) | 0.00 (16) | 13522 | 3.74 | 6 |
+| cpi0.5 | 0.22 | 0.50 (32) | 0.00 (24) | 0.00 (16) | 14098 | 3.96 | 12 |
+
+Here reuse meets τ almost only at 0–20 m, so the admission mostly trades near-range reuse for sized dedicated looks. Those are cheap at short range: dedicated REs per look go from 12.9k (off) to 14.7k (k = 4). Your scenes also reuse at 20–45 m, where the rule will bite harder, so read this table for the shape, not the operating point. `cpi0.3` changes nothing here, while `cpi0.4`/`cpi0.5` and `k2`/`k3` are the graded settings. Choose the operating point from your closed loop, after calibrating `exp_points` against observed points.
+
 ### Extended target in the paper pipeline and RT check
 
 `python -m isac.simulate --target-model extended` runs the paper conditions with the multi-scatterer box in place of the point detector (`target.ExtendedDetector`), paired by seed block with the point model, and writes to `outputs/simulation_extended/`. The paper's effective RCS prior is kept: the dominant scatterer is lowered by the box's own contribution at the full-band reference cell (0–1.3 dB per frame), so the two models agree at that cell.
