@@ -352,7 +352,13 @@ If your profile still shows planning as the bottleneck at this commit, send it (
 
 `info` carries the grid (`points_cells`, `points_du`, `points_dr_m`) and `points_sum_snr_db`, the expected SINR summed over the target's cells.
 
-The count saturates at the number of cells the visible box occupies: about 6–7 at 12 m and about 4 at 38 m at full CPI. Your 51 points at 0–20 m exceed that, which suggests CLEAN extracts several components per cell as SNR grows. So calibrate observed points against both `exp_points` and `points_sum_snr_db`; the second does not saturate. The model's relative behaviour (local, mimo_v6, covering dedicated beam, at 12 / 25 / 38 m):
+The count saturates at the number of cells the visible box occupies: about 6–7 at 12 m and about 4 at 38 m at full CPI. Your 51 points at 0–20 m exceed that, which suggests CLEAN extracts several components per cell as SNR grows. So calibrate observed points against both `exp_points` and `points_sum_snr_db`; the second does not saturate.
+
+*Local calibration (validation scene, 1010 track looks, admission off, front end 2281a1f):*
+- Spearman(observed points in the true box, `exp_points`) = 0.71 (reuse 0.77, dedicated 0.60), against 0.46 for `points_sum_snr_db` (dedicated 0.07).
+- `exp_points` did not saturate against the observed counts. Reuse looks: 1–2 → 2 observed (p50), 4–6 → 5, 8–12 → 14, ≥ 12 → 24.
+
+Use `exp_points`; the saturation caveat above did not show in practice. The same check found that the number of points is not what limits reuse-look accuracy: the measurement error is flat in observed points. Most of the reuse gap was traced to the relative alignment of past looks in the tracker's history window, which is a tracker-side issue. The admission stays available to trade the remaining look quality against reuse share. The model's relative behaviour (local, mimo_v6, covering dedicated beam, at 12 / 25 / 38 m):
 - Reuse looks (grants of 288–4608 REs): about 2.7–4.0 points.
 - The same dedicated beam at 432 / 1728 / 6912 / 32768 REs: 1.6 / 3.5 / 5.2 / 6.1 points at 12 m, and 0.1 / 0.6 / 1.8 / 4.0 at 38 m.
 - So reuse reaches 0.6–0.8 of the τ-sized dedicated look but 0.3–0.45 of the full-CPI look. The second matches your 0.2–0.3 against dedicated tracking (full CPI).
