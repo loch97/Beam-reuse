@@ -13,8 +13,14 @@ STRESS = ["s1", "s2", "b+2", "b-2"]
 
 
 def main():
+    import argparse
+
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--target-model", choices=["point", "extended"], default="point")
+    tm = p.parse_args().target_model
+    suffix = "" if tm == "point" else "_extended"
     seeds = list(range(2026100600, 2026100664))
-    folder = OUT / "simulation"
+    folder = OUT / ("simulation" + suffix)
     paths = {(c, s): folder / f"{c}_seed{s}_f12.json" for c in CONDITIONS for s in seeds}
     missing = [str(p.name) for p in paths.values() if not p.exists()]
     if missing:
@@ -99,7 +105,7 @@ def main():
                     mean=(mean[a, k, :, 4] - mean[b, k, :, 4]).tolist(),
                     ci=np.quantile(d, [0.025, 0.975], axis=0).T.tolist(),
                 )
-    (OUT / "resource_summary.json").write_text(
+    (OUT / f"resource_summary{suffix}.json").write_text(
         json.dumps(resource, indent=2) + "\n", encoding="utf-8"
     )
     robust = dict(
@@ -186,7 +192,7 @@ def main():
         robust["paired_broadening_minus_multibeam"][metric] = dict(
             estimate=estimate.tolist(), ci=np.quantile(delta, [0.025, 0.975], axis=0).T.tolist()
         )
-    (OUT / "robustness_summary.json").write_text(
+    (OUT / f"robustness_summary{suffix}.json").write_text(
         json.dumps(robust, indent=2) + "\n", encoding="utf-8"
     )
     print("Complete full-set inference: 384 blocks and 64 frozen-robustness blocks.")

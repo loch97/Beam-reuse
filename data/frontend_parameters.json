@@ -1,0 +1,37 @@
+{
+  "scatterer_offsets_db": {
+    "dominant_face": 0.0,
+    "corner": -6.0,
+    "other_face": -10.0
+  },
+  "ext_focus": "any",
+  "ext_cells_per_sigma": 2,
+  "ext_z_max": 4.0,
+  "ext_u_cell": 0.00390625,
+  "ext_max_cells": 96,
+  "ext_min_mass": 1e-09,
+  "ext_heading_nodes": 3,
+  "ext_glint_m": 0.3,
+  "road_heading_rad": 1.5707963267948966,
+  "heading_std_slow_rad": 0.35,
+  "slow_speed_mps": 1.0,
+  "track_init_pos_std_m": 3.0,
+  "track_init_vel_std_mps": 3.0,
+  "rcs_confidence": 0.8,
+  "ue_dir_nodes": 257,
+  "ext_heading_min_disp_m": 0.1,
+  "rcs_likelihood": "event+truncated",
+  "rcs_mode": "predictive",
+  "rcs_tau0_db": 3.0,
+  "rcs_tau_a0": 3.0,
+  "rcs_omega0_db": 2.0,
+  "rcs_grid_db": 0.25,
+  "rcs_delta_nodes": 25,
+  "rcs_delta_z": 4.0,
+  "rcs_nodes": 6,
+  "rcs_curve_db": [
+    -40.0,
+    50.0,
+    1.5
+  ]
+}
