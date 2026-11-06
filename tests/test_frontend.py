@@ -1388,5 +1388,198 @@ class PointsAdmissionTests(unittest.TestCase):
                 self.near, self.grants)
 
 
+class CostFirstOrderTests(unittest.TestCase):
+    """Round 10 R1: search_order="cost" never pays more than the stage order."""
+
+    @classmethod
+    def setUpClass(cls):
+        import dataclasses
+        from isac.site import SiteConfig
+
+        CL.configure()
+        cls.meta, cls.rsu, cls.bore = LS.geometry()
+        cls.site = SiteConfig.mimo_v6(rsu_xy=cls.rsu, boresight_rad=cls.bore, snr_offset_db=0.0,
+                                      snr_sigma_db=0.0)
+        g0 = CL.Scheduler(cls.rsu, cls.bore, np.random.default_rng(203), n_grants=5).grants(0.4)
+        # 15 dB less grant SINR at the scheduler's MCS: little headroom left
+        cls.grants = [dataclasses.replace(g, sinr_db=g.sinr_db - 15.0) for g in g0]
+
+    def track(self, y):
+        return TR.CVTracker(0, 0.0, (5.25, y), (0.0, 8.0), self.rsu, self.bore, (4.73, 1.88),
+                            P0=np.diag([.3, .3, .2, .2])).report()
+
+    def test_zero_cost_in_later_stage(self):
+        tr = self.track(-50.0)
+        a = BeamFrontEnd(site=self.site).plan(tr, self.grants)
+        b = BeamFrontEnd(site=self.site, search_order="cost").plan(tr, self.grants)
+        self.assertEqual((a.mode, b.mode), ("reuse", "reuse"))
+        self.assertGreater(a.cost_bits, 0.0)  # the stage order drops the MCS ...
+        self.assertEqual(b.cost_bits, 0.0)    # ... though a later stage reuses for free
+        self.assertGreaterEqual(b.pd_pred, BeamFrontEnd(site=self.site).tau)
+        self.assertEqual(b.info["search_order"], "cost")
+        self.assertNotIn("search_order", a.info)
+
+    def test_never_costlier_same_reuse_decision(self):
+        st, co = BeamFrontEnd(site=self.site), BeamFrontEnd(site=self.site, search_order="cost")
+        for y in (-15.0, -30.0, -70.0):
+            tr = self.track(y)
+            a, b = st.plan(tr, self.grants), co.plan(tr, self.grants)
+            self.assertEqual(a.mode == "dedicated", b.mode == "dedicated")
+            self.assertLessEqual(b.cost_bits, a.cost_bits + 1e-9)
+        with self.assertRaises(ValueError):
+            BeamFrontEnd(site=self.site, search_order="x")
+
+
+class PeakFloorTests(unittest.TestCase):
+    """Round 10 R3: CLEAN's threshold max(eta, peak - peak_floor_db) in the point/cell counts."""
+
+    @classmethod
+    def setUpClass(cls):
+        from isac.site import SiteConfig
+
+        CL.configure()
+        cls.SiteConfig = SiteConfig
+        cls.meta, cls.rsu, cls.bore = LS.geometry()
+        cls.grants = CL.Scheduler(cls.rsu, cls.bore, np.random.default_rng(5), n_grants=5).grants(0.4)
+        cls.tr = TR.CVTracker(0, 0.0, (5.25, -12.0), (0.0, 8.0), cls.rsu, cls.bore, (4.73, 1.88),
+                              P0=np.diag([.3, .3, .2, .2])).report()
+
+    def fe(self, **kw):
+        site = self.SiteConfig.mimo_v6(rsu_xy=self.rsu, boresight_rad=self.bore,
+                                       snr_offset_db=0.0, snr_sigma_db=0.0, **kw)
+        return BeamFrontEnd(site=site, dedicated_covering=True)
+
+    def test_threshold_formula(self):
+        lp = math.log(2.2e-9)
+        # power 1 + 0.5 + 1000 over thermal, peak 1e5: relative threshold 1e5 / 10^2.5 / 1.5
+        got = TG.peak_floor_lp(1001.5, 0.5, lp, 1e5, 25.0)
+        self.assertAlmostEqual(got, -max(-lp, 1e5 / 10 ** 2.5 / 1.5))
+        self.assertAlmostEqual(TG.peak_floor_lp(10.0, 0.0, lp, 10.0, 25.0), lp)  # thermal binds
+
+    def test_floor_effects(self):
+        d0, dd0 = self.fe().plan(self.tr, self.grants), self.fe().dedicated(self.tr, self.grants)
+        far = self.fe(peak_floor_db=400.0)
+        d1, dd1 = far.plan(self.tr, self.grants), far.dedicated(self.tr, self.grants)
+        self.assertAlmostEqual(d1.exp_points, d0.exp_points, places=9)
+        self.assertAlmostEqual(d1.exp_detected_cells, d0.exp_detected_cells, places=9)
+        self.assertAlmostEqual(dd1.exp_points, dd0.exp_points, places=9)
+        glob = self.fe(peak_floor_db=25.0, peak_floor_ref="global")
+        dg, ddg = glob.plan(self.tr, self.grants), glob.dedicated(self.tr, self.grants)
+        self.assertEqual(dg.mode, "reuse")
+        # the UE echo is the brightest cell of a reuse look's image
+        self.assertLess(dg.exp_points, d0.exp_points - 0.5)
+        self.assertLess(dg.exp_detected_cells, d0.exp_detected_cells)
+        self.assertAlmostEqual(ddg.exp_points, dd0.exp_points, places=9)  # no UE in the beam
+        self.assertEqual((dg.mode, dg.grant, dg.tag, dg.pd_pred), (d0.mode, d0.grant, d0.tag, d0.pd_pred))
+        capped = self.fe(peak_floor_db=25.0, max_points=2).plan(self.tr, self.grants)
+        self.assertLessEqual(capped.exp_points, 2.0 + 1e-9)
+        tight = self.fe(peak_floor_db=0.0).plan(self.tr, self.grants)
+        self.assertLess(tight.exp_points, 1.5)
+        self.assertEqual(dg.info["points_peak_floor_ref"], "global")
+
+    def test_points_objective(self):
+        fe = self.fe(peak_floor_db=25.0, peak_floor_ref="global")
+        dp = fe.plan(self.tr, self.grants)
+        dq = fe.plan(self.tr, self.grants, objective="points")
+        self.assertEqual(dq.mode, "reuse")
+        self.assertGreaterEqual(dq.pd_pred, fe.tau)
+        self.assertGreaterEqual(dq.exp_points, dp.exp_points - 0.05)
+        self.assertEqual(dq.info["objective"], "points")
+        with self.assertRaises(ValueError):
+            fe.plan_multi(self.tr, self.grants, objective="points")
+
+
+class PerPoseVisibilityTests(unittest.TestCase):
+    """Round 10 R4: pose_visibility="per_pose" recomputes visible faces at every pose node."""
+
+    @classmethod
+    def setUpClass(cls):
+        from isac.site import SiteConfig
+
+        CL.configure()
+        cls.meta, cls.rsu, cls.bore = LS.geometry()
+        cls.site = SiteConfig.mimo_v6(rsu_xy=cls.rsu, boresight_rad=cls.bore, snr_offset_db=0.0,
+                                      snr_sigma_db=0.0)
+        cls.grants = CL.Scheduler(cls.rsu, cls.bore, np.random.default_rng(5), n_grants=5).grants(0.4)
+
+    def test_tight_pose_matches_mean_pose(self):
+        with self.site.active():
+            a = TG.pose_nodes((5.25, -30.0), np.diag([1e-4, 1e-4]), 1.5708, 0.0, (4.73, 1.88),
+                              self.rsu, self.bore, 0.0)
+            b = TG.pose_nodes((5.25, -30.0), np.diag([1e-4, 1e-4]), 1.5708, 0.0, (4.73, 1.88),
+                              self.rsu, self.bore, 0.0, per_pose=True)
+        key = lambda n, j: (round(float(n.u[0, j]), 9), round(float(n.r[0, j]), 9))
+        sa = {key(a, j): a.sigma_dbsm[j] for j in range(len(a.keys))}
+        sb = {key(b, j): b.sigma_dbsm[0, j] for j in range(len(b.keys))
+              if np.isfinite(b.sigma_dbsm[0, j])}
+        self.assertEqual(sa, sb)
+        self.assertEqual(key(a, a.dom), key(b, b.dom))
+
+    def test_near_rsu_visibility_changes(self):
+        tr = TR.CVTracker(0, 0.0, (3.0, -6.0), (0.0, 8.0), self.rsu, self.bore, (4.73, 1.88),
+                          P0=np.diag([2.0, 2.0, .2, .2])).report()
+        fe = BeamFrontEnd(site=self.site, pose_visibility="per_pose")
+        with self.site.active():
+            pred = fe.prediction(tr, 0.4)
+            n = pred["nodes"]
+            hidden = ~np.isfinite(n.sigma_dbsm)
+            self.assertTrue(hidden.any() and not hidden.all(axis=1).any())
+            W = np.atleast_2d(V.beam(pred["u_hat"]))
+            rho = TG.cell_snr(W, n, 432, 190.08e6)
+            self.assertTrue(np.all(rho[0][hidden] == 0.0))  # a hidden scatterer has no cell
+            exact = TG.extended_pd_shifts(W, n, 432, 190.08e6, shifts_db=[0.0, 6.0])[0][:, 0]
+            ub = [TG.pd_upper_bound(W, n, 432, [s], [1.0])[0] for s in (0.0, 6.0)]
+            self.assertTrue(np.all(np.array(ub) >= exact - 1e-12))
+        d = fe.plan(tr, self.grants)
+        self.assertTrue(np.isfinite(d.pd_pred) and np.isfinite(d.exp_detected_cells))
+        with self.assertRaises(ValueError):
+            BeamFrontEnd(site=self.site, pose_visibility="x")
+
+
+class PublicInterfaceTests(unittest.TestCase):
+    """Round 10 R5: candidate_table / reuse_decision reproduce plan's own evaluation."""
+
+    @classmethod
+    def setUpClass(cls):
+        from isac.site import SiteConfig
+
+        CL.configure()
+        cls.meta, cls.rsu, cls.bore = LS.geometry()
+        cls.site = SiteConfig.mimo_v6(rsu_xy=cls.rsu, boresight_rad=cls.bore, snr_offset_db=0.0,
+                                      snr_sigma_db=0.0)
+        cls.grants = CL.Scheduler(cls.rsu, cls.bore, np.random.default_rng(5), n_grants=5).grants(0.4)
+        cls.tr = TR.CVTracker(0, 0.0, (5.25, -25.0), (0.0, 8.0), cls.rsu, cls.bore, (4.73, 1.88),
+                              P0=np.diag([.3, .3, .2, .2])).report()
+
+    def test_table_and_decision_match_plan(self):
+        fe = BeamFrontEnd(site=self.site)
+        d = fe.plan(self.tr, self.grants)
+        self.assertEqual(d.mode, "reuse")
+        tab = fe.candidate_table(self.tr, self.grants, detected=True, points=True)
+        self.assertEqual(set(tab), set(BeamFrontEnd.TABLE_COLUMNS))
+        row = [k for k in range(len(tab["grant"])) if tab["grant"][k] == d.grant
+               and np.allclose(tab["weights"][k], d.weights)]
+        self.assertEqual(len(row), 1)
+        self.assertEqual(tab["tag"][row[0]], d.tag)
+        self.assertAlmostEqual(float(tab["pd"][row[0]]), d.pd_pred, places=12)
+        self.assertTrue(bool(tab["meets_tau"][row[0]]))
+        self.assertAlmostEqual(float(tab["cost_bits"][row[0]]), d.cost_bits, places=9)
+        self.assertAlmostEqual(float(tab["exp_points"][row[0]]), d.exp_points, places=9)
+        ex = fe.candidate_table(self.tr, self.grants, quality=False, exact_pd=True)
+        self.assertTrue(np.all(ex["pd"] >= 0) and np.all(np.isnan(ex["pred_cell_snr_db"])))
+        kept = tab["pd"] >= 0
+        np.testing.assert_allclose(ex["pd"][kept], tab["pd"][kept], rtol=0, atol=1e-12)
+        r = fe.reuse_decision(self.tr, self.grants, d.grant, int(tab["cand"][row[0]]))
+        for f in ("mode", "grant", "tag", "ue_id", "mcs", "n_re"):
+            self.assertEqual(getattr(r, f), getattr(d, f))
+        for f in ("pd_pred", "cost_bits", "ue_loss_db", "pred_cell_snr_db", "exp_points",
+                  "exp_detected_cells", "coverage_db"):
+            self.assertAlmostEqual(getattr(r, f), getattr(d, f), places=9)
+        np.testing.assert_allclose(r.pd_curve, d.pd_curve, atol=1e-12)
+        self.assertEqual(r.info["selected_by"], "caller")
+        with self.assertRaises(ValueError):
+            fe.reuse_decision(self.tr, self.grants, d.grant, -1)
+
+
 if __name__ == "__main__":
     unittest.main()

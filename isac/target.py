@@ -108,13 +108,20 @@ def _u_gradient(xy, rsu, bore):
     return (a - float(a @ n) * n) / h
 
 
-def pose_nodes(mean_xy, cov_xy, heading, heading_std, extent, rsu, bore, sig_dom, h_rc=None):
+def pose_nodes(mean_xy, cov_xy, heading, heading_std, extent, rsu, bore, sig_dom, h_rc=None,
+               per_pose=False):
     """Cell quadrature over position (principal axes of ``cov_xy``) and heading.
 
     The cell width on each axis keeps the induced direction step below ``ext_u_cell`` and below
     1/``ext_cells_per_sigma`` standard deviations, capped at ``ext_max_cells`` cells per axis.
     Heading nodes are added when the heading spread moves the box ends by more than
-    ``ext_heading_min_disp_m``. Visibility and the dominant face are fixed at the mean pose.
+    ``ext_heading_min_disp_m``. Visibility and the dominant face are fixed at the mean pose
+    (default); ``per_pose=True`` recomputes them at every node (``box_scatterers`` there), so a
+    face that turns away stops reflecting and the dominant-face RCS moves with the pose. The
+    node arrays then span every scatterer visible at some node, labelled by its body-frame
+    position; a scatterer hidden at a node gets -inf dBsm (no power, no cell) there, so
+    ``sigma_dbsm`` is (nodes, scatterers). ``dom`` stays the mean pose's dominant face (the RCS
+    reference of the evidence curves).
     """
     h_rc = V.P["rc_h"] if h_rc is None else h_rc
     L, W = extent
@@ -147,15 +154,50 @@ def pose_nodes(mean_xy, cov_xy, heading, heading_std, extent, rsu, bore, sig_dom
     else:
         zh, wh = np.zeros(1), np.ones(1)
     centers = np.asarray(mean_xy, float) + dxy
+    w = np.concatenate([wxy * x for x in wh])
+    if per_pose:
+        return _per_pose_nodes(centers, heading, heading_std, zh, w, L, W, rsu, bore, sig_dom,
+                               h_rc, body[keys.index(dom)])
     xy = np.concatenate(
         [centers[:, None, :] + (body @ rot(heading + heading_std * z).T)[None] for z in zh]
     )
-    w = np.concatenate([wxy * x for x in wh])
     n, k = xy.shape[:2]
     u, r, th, _ = V.to_polar(xy.reshape(-1, 2), rsu, bore, V.P["rsu_h"], h_rc)
     return PoseNodes(
         u.reshape(n, k), r.reshape(n, k), th.reshape(n, k), w / w.sum(), sig, keys.index(dom), keys
     )
+
+
+def _per_pose_nodes(centers, heading, heading_std, zh, w, L, W, rsu, bore, sig_dom, h_rc,
+                    dom_body):
+    """``pose_nodes`` with visibility and the dominant face recomputed at every node."""
+    label = lambda b: (int(round(2 * b[0] / L)), int(round(2 * b[1] / W)))
+    rows = []
+    for z in zh:
+        h = heading + heading_std * z
+        for c in centers:
+            keys, xy, sig, dom, body = box_scatterers(c, h, L, W, rsu, sig_dom)
+            rows.append({label(b): (p, s_) for b, p, s_ in zip(body, xy, sig)} if dom else {})
+    labels = sorted(set().union(*rows))
+    if not labels:
+        raise ValueError("no visible box face at any pose node")
+    n, k = len(rows), len(labels)
+    xy = np.empty((n, k, 2))
+    sig = np.full((n, k), -np.inf)
+    hs = np.repeat(heading + heading_std * np.asarray(zh), len(centers))
+    cs = np.tile(centers, (len(zh), 1))
+    for j, lab in enumerate(labels):
+        off = np.array([lab[0] * L / 2, lab[1] * W / 2])
+        ch, sh = np.cos(hs), np.sin(hs)
+        xy[:, j] = cs + np.column_stack([ch * off[0] - sh * off[1], sh * off[0] + ch * off[1]])
+        for i, r_ in enumerate(rows):
+            if lab in r_:
+                sig[i, j] = r_[lab][1]
+    u, r, th, _ = V.to_polar(xy.reshape(-1, 2), rsu, bore, V.P["rsu_h"], h_rc)
+    keys = ["pp_%d_%d" % lab for lab in labels]
+    dom = labels.index(label(dom_body)) if label(dom_body) in labels else int(np.argmax(sig.max(0)))
+    return PoseNodes(u.reshape(n, k), r.reshape(n, k), th.reshape(n, k), w / w.sum(), sig, dom,
+                     keys)
 
 
 def array_gain(W, u):
@@ -182,7 +224,10 @@ def cell_snr(W, nodes, n_re, bandwidth):
     du = nodes.u[:, :, None] - nodes.u[:, None, :]
     dr = nodes.r[:, :, None] - nodes.r[:, None, :]
     coupling = V.rx_rel(du) * delay_power(dr, bandwidth)
-    return np.einsum("bnk,nck->bnc", rho, coupling, optimize=True)
+    out = np.einsum("bnk,nck->bnc", rho, coupling, optimize=True)
+    if np.ndim(nodes.sigma_dbsm) == 2:  # per-pose visibility: a hidden scatterer has no cell
+        out *= np.isfinite(nodes.sigma_dbsm)[None]
+    return out
 
 
 def cell_pd(rho, leak=None, lp=None):
@@ -195,7 +240,8 @@ def cell_pd(rho, leak=None, lp=None):
       evaluated exactly as before;
     - m != 1: exact negative-binomial series (m > 1 less fluctuation);
     - m = inf: deterministic cell power, i.e. Marcum Q (Poisson series).
-    P is increasing in rho for every m, so the screening bounds stay valid.
+    P is increasing in rho for every m, so the screening bounds stay valid. ``lp`` may be an
+    array (element-wise thresholds, broadcast against rho).
     """
     lp = math.log(V.P["pfa"]) if lp is None else lp
     m = V.P.get("speckle_m")
@@ -214,7 +260,7 @@ def cell_pd(rho, leak=None, lp=None):
     while True:
         k += 1
         tail = gammainc(k + 1, eta)
-        if tail < 1e-12:
+        if np.max(tail) < 1e-12:
             break
         if np.isinf(m):
             logpmf = -s_ + k * np.log(s_) - gammaln(k + 1)
@@ -253,7 +299,8 @@ def pd_upper_bound(W, nodes, n_re, shifts_db, weights):
     lo, hi = float(nodes.u.min()), float(nodes.u.max())
     g = gain_upper_bound(W, lo, hi)
     r_min = nodes.r.min(axis=0)
-    unit = float(np.sum(10 ** (V.rc_snr_db(1.0, 0.0, r_min, nodes.sigma_dbsm, 90.0, n_re) / 10)))
+    sig = nodes.sigma_dbsm if np.ndim(nodes.sigma_dbsm) == 1 else nodes.sigma_dbsm.max(axis=0)
+    unit = float(np.sum(10 ** (V.rc_snr_db(1.0, 0.0, r_min, sig, 90.0, n_re) / 10)))
     lp = math.log(V.P["pfa"])
     scale = 10 ** (np.atleast_1d(np.asarray(shifts_db, float)) / 10)
     pd = cell_pd(scale[:, None] * unit * g[None, :], None, lp)
@@ -544,7 +591,21 @@ def surface_patches(center, heading, L, W, rsu, offsets=None, spacing=POINTS_PAT
     return np.concatenate(out_xy), np.concatenate(out_s)
 
 
-def expected_points(parts, pred, rsu, bore, bandwidth, sigma, weights, lp=None):
+def peak_floor_lp(power, leak, lp, peak, floor_db):
+    """Element-wise log-Pfa for CLEAN's threshold max(eta, peak - floor).
+
+    ``power`` = 1 + leak + target SNR is each cell's mean power over thermal noise and ``peak``
+    the mean power of the reference peak (broadcast). The thermal threshold is eta (1 + leak);
+    the relative one is peak / 10^(floor/10). Returned as log-Pfa on the cell's noise-plus-
+    leakage scale, i.e. -max(eta, peak / (F (1 + leak))), for ``cell_pd``.
+    """
+    eta = -lp
+    rel = np.asarray(peak, float) / 10 ** (floor_db / 10) / (1 + np.asarray(leak, float))
+    return -np.maximum(eta, rel)
+
+
+def expected_points(parts, pred, rsu, bore, bandwidth, sigma, weights, lp=None,
+                    peak_floor_db=None, max_points=None, peak_floor_ref="target"):
     """Expected number of detected receive-image cells on the target, per call.
 
     ``parts`` = [(W, n_re, clutter)] (several parts add their energy, as in multi-grant looks).
@@ -555,6 +616,12 @@ def expected_points(parts, pred, rsu, bore, bandwidth, sigma, weights, lp=None):
     single reflector gives at most one point, as CLEAN returns one point per resolved peak. Each cell crosses with ``cell_pd`` at its SNR over noise plus
     mean UE leakage; the count is averaged over poses and the RCS (and calibration) nodes
     ``sigma``/``weights``, as P_D is. Without an extent the target is one point.
+    ``peak_floor_db`` adds CLEAN's relative threshold: a cell must also reach the reference peak
+    minus ``peak_floor_db``. The reference is the mean power of the strongest target cell at each
+    pose and RCS node ("target", a single-target gate) or the larger of that and the UE's own echo
+    ("global", a shared image). Using the mean of the strongest cell rather than the random
+    maximum is an approximation (it makes the relative threshold slightly low). ``max_points``
+    caps the expected count per pose and RCS node (CLEAN's point budget).
     Returns (expected points, info dict). The count saturates at the number of occupied cells;
     ``info["points_sum_snr_db"]`` (expected SINR summed over the target's cells, dB) does not,
     and is the companion feature for calibrating against observed CLEAN points.
@@ -608,6 +675,7 @@ def expected_points(parts, pred, rsu, bore, bandwidth, sigma, weights, lp=None):
     np.put_along_axis(coup, cell[:, :, None], 1.0, axis=2)
     snr = 0.0
     leak = 0.0
+    ue_peak = 0.0
     for W, n_re, clutter in parts:
         W = np.atleast_2d(W)
         g = array_gain(W, u)[0]
@@ -621,14 +689,32 @@ def expected_points(parts, pred, rsu, bore, bandwidth, sigma, weights, lp=None):
             cp = 10 ** (V.rc_snr_db(array_gain(W, cu)[0], cu, cr, cs, ct, n_re) / 10)
             leak = leak + (cp * cw) @ (V.rx_rel(UC[None] - cu[:, None])
                                        * delay_power(RC[None] - cr, bandwidth))
+            ue_peak = ue_peak + float(cp @ cw)
     sinr = snr / (1 + leak)
     sk, wk = np.asarray(sigma, float), np.asarray(weights, float)
-    count = sum(w_ * (cell_pd(10 ** (s_ / 10) * sinr, None, lp).sum(axis=1) @ pw_)
-                for s_, w_ in zip(sk, wk))
+    if peak_floor_ref not in ("target", "global"):
+        raise ValueError(peak_floor_ref)
+    leak_a = np.broadcast_to(leak, snr.shape)
+    count = 0.0
+    for s_, w_ in zip(sk, wk):
+        x = 10 ** (s_ / 10)
+        if peak_floor_db is None:
+            per = cell_pd(x * sinr, None, lp).sum(axis=1)
+        else:
+            power = 1 + leak_a + x * snr
+            peak = power.max(axis=1, keepdims=True)
+            if peak_floor_ref == "global":
+                peak = np.maximum(peak, 1 + ue_peak)
+            per = cell_pd(x * snr, leak_a, peak_floor_lp(power, leak_a, lp, peak,
+                                                         peak_floor_db)).sum(axis=1)
+        if max_points is not None:
+            per = np.minimum(per, max_points)
+        count += w_ * (per @ pw_)
     total = float(wk @ 10 ** (sk / 10)) * float(sinr.sum(axis=1) @ pw_)
     return float(count), dict(points_cells=int(len(UC)), points_poses=int(len(pw_)),
                               points_patches=int(n_p), points_du=du, points_dr_m=dr,
-                              points_sum_snr_db=float(10 * np.log10(max(total, 1e-30))))
+                              points_sum_snr_db=float(10 * np.log10(max(total, 1e-30))),
+                              points_peak_floor_db=peak_floor_db, points_peak_floor_ref=peak_floor_ref)
 
 
 def extended_pd(W, nodes, n_re, bandwidth, clutter=None, focus=None, threshold=None):

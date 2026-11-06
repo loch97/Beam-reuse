@@ -66,6 +66,11 @@ class SiteConfig:
     ``reuse_points_ref``: "sized" = the dedicated fallback as planned (covering and RE sizing as
     configured); "cpi" = the same beam at the CPI cap (``dedicated_cap_re``, default 32768 REs).
     Candidates failing it are treated like candidates missing tau.
+    CLEAN threshold rule for the point and cell counts (``exp_points``, ``exp_detected_cells``,
+    the "quality" objective; not P_D): ``peak_floor_db`` (None = thermal threshold only, as
+    before) adds the relative threshold max(eta, peak - peak_floor_db); ``peak_floor_ref``
+    "target" takes the strongest target cell as the peak (single-target gate), "global" the
+    larger of that and the UE's own echo (shared image); ``max_points`` caps the count.
     """
 
     rsu_xy: Optional[tuple] = None
@@ -107,6 +112,9 @@ class SiteConfig:
     min_reuse_points: Optional[float] = None
     reuse_points_ratio: Optional[float] = None
     reuse_points_ref: str = "sized"
+    peak_floor_db: Optional[float] = None
+    max_points: Optional[int] = None
+    peak_floor_ref: str = "target"
 
     def __post_init__(self):
         for a, b in (("tx_power_dbm", "p_ref_dbm"), ("noise_figure_db", "nf_rx"),

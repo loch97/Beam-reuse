@@ -392,6 +392,54 @@ Use `exp_points`; the saturation caveat above did not show in practice. The same
 
 Here reuse meets τ almost only at 0–20 m, so the admission mostly trades near-range reuse for sized dedicated looks. Those are cheap at short range: dedicated REs per look go from 12.9k (off) to 14.7k (k = 4). Your scenes also reuse at 20–45 m, where the rule will bite harder, so read this table for the shape, not the operating point. `cpi0.3` changes nothing here, while `cpi0.4`/`cpi0.5` and `k2`/`k3` are the graded settings. Choose the operating point from your closed loop, after calibrating `exp_points` against observed points.
 
+#### Tenth-round notes (cost-first order, CLEAN threshold rule, per-pose visibility, public interface)
+
+All additions are opt-in; default decisions are unchanged (72 scenarios identical to d786264). Local check site: mimo_v6 with `snr_offset_db=0`, `snr_sigma_db=0` (your fixed-noise link), 190.08 MHz.
+
+**R1: cost-first order (`BeamFrontEnd(search_order="cost")`).** The default `"stage"` order (the paper's sequential policy) searches stage by stage, so a stage whose cheapest feasible beam drops the MCS wins over a later stage's free beam. `"cost"` groups every stage's candidates by communication cost (ascending) and settles a cost group by stage, then by the usual tie-breaks (higher P_D, lower UE loss, index). Its cost is therefore never higher, and reuse vs dedicated is the same (the same candidates meet τ, and the points admission applies to both). It is used by `plan`, `plan_frame` (through `plan`) and `plan_multi`'s single-grant fallback; `info["search_order"]` marks it.
+- Local check: 6 grant draws × 4 SINR drops (0/5/10/15 dB at the scheduler's MCS) × 4 ranges = 96 looks.
+  - The stage order paid a cost in 60 of them; cost-first found a free reuse in 5 of those 60 and was never costlier.
+  - Reuse vs dedicated was identical in all 96.
+  - Example: seed 203, −15 dB, 50 m. Stage order: grant 2 tag 140, 283.5 bits, P_D 0.945. Cost-first: grant 2 tag 5, 0 bits, P_D 0.957, matching your replay.
+
+**R3: CLEAN threshold rule (`SiteConfig.peak_floor_db`, `max_points`, `peak_floor_ref`).** It applies to `exp_points`, `exp_detected_cells`, the "quality" objective, the points admission and the new "points" objective. It does not apply to P_D: the strongest cell always clears its own relative floor.
+- A cell must reach max(η(1+L), peak / 10^(floor/10)) on the thermal scale (`target.peak_floor_lp`).
+- The peak is the mean power of the strongest target cell at each pose and RCS node (`"target"`, single-target gate). With `"global"` (shared image) it is the larger of that and the UE's own echo.
+- Using the mean of the strongest cell instead of the random maximum is an approximation, and it makes the relative threshold slightly low.
+- `max_points` caps the expected count per pose and RCS node.
+- `cell_pd` now accepts element-wise thresholds; scalar results are unchanged.
+
+What it does locally (12 / 25 / 45 m):
+- With `"target"` and 25 dB nothing changes, because the box model's dynamic range within one target is below 25 dB (corners −6 dB, other faces −10 dB).
+- With `"global"` the UE echo is the brightest cell of a reuse look's image. Reuse-look points drop from 5.3 / 7.3 / 3.8 to 3.0 / 5.6 / 1.6, while dedicated looks (no UE in the beam) are unchanged.
+
+If your shared image keeps the UE echo, `"global"` is the setting that matches it.
+
+**R2: a quality measure that still separates beams at high SNR.** Use `exp_points` (0.25 m patches, receive-image cells, with the R3 rule), not P_D or `exp_detected_cells`; the latter counts at most the 5–7 box scatterers. `plan(..., objective="points")` (or `BeamFrontEnd(objective="points")`) takes, among the candidates meeting τ (and the requirement and points admission), the largest `exp_points`. Ties within 0.05 points go to the cheaper candidate. It costs about 50 ms per feasible candidate and is not available in `plan_multi`, where a ValueError says so. Your earlier calibration (Spearman 0.71 against observed points, no saturation) was made without the R3 rule; recheck it with `peak_floor_db=25`, `max_points=128` and the `peak_floor_ref` that matches your image.
+
+**R4: per-pose visibility (`BeamFrontEnd(pose_visibility="per_pose")`).**
+- `pose_nodes(..., per_pose=True)` recomputes the visible faces and the dominant face at every pose node, as `expected_points` already did.
+- Scatterers are labelled by body-frame position. The node arrays span the union of those visible at any node, with −∞ dBsm (no power and, in `cell_snr`, no cell) where hidden, so `PoseNodes.sigma_dbsm` is then (nodes, scatterers).
+- `dom` stays the mean pose's dominant face: the RCS reference of the evidence curves and of `rcs_look`.
+- `pd_upper_bound` uses each scatterer's maximum RCS over nodes, so it stays rigorous (tested).
+
+It is opt-in because it changes the extended model's P_D, which the paper's extended runs (and the paired batch running here) use. With a tight pose it reproduces the mean-pose nodes exactly. At 6 m with a 2 m² pose spread the union has 7 scatterers, and `exp_detected_cells` goes from 2.72 to 3.58 with P_D almost unchanged. It costs about 0.3–0.4 s more per plan.
+
+**R5: public interface (stable names; please move off the private helpers).**
+- `BeamFrontEnd.candidate_table(track, grants, rcs=None, t=None, requirement=None, quality=True, detected=False, points=False, exact_pd=False)` evaluates every admissible reuse candidate exactly as `plan` does. Columns are in `BeamFrontEnd.TABLE_COLUMNS`:
+  - identity: grant, cand, ue_id, tag, stage;
+  - communication: loss_db, mcs, dse, cost_bits;
+  - detection: pd, meets_tau;
+  - quality: pred_cell_snr_db, exp_quality_cells, exp_detected_cells, exp_points, requirement_met;
+  - the beam: weights.
+
+  `(grant, cand)` identifies a beam, since several beams share a tag. `pd` is −1 for candidates screened out below τ unless `exact_pd=True`.
+- `BeamFrontEnd.reuse_decision(track, grants, grant, cand, ...)` returns the `BeamDecision` that `plan` would have returned for that candidate (exact P_D, curves, annotations, `info["selected_by"] = "caller"`). That is all a caller-side order such as your `qos_plan` needs.
+- `evaluate_grant`, `detected_cells`, `dedicated`, `offset_curve` and `evidence_curve` stay public. `_fill_pd`, `_fill_detected`, `_cell_terms`, `_evidence_nodes` and `_reuse` are internal and may change.
+- The test `PublicInterfaceTests` checks that the table and `reuse_decision` reproduce `plan`'s chosen candidate field by field.
+
+**No change needed for your local items.** `l_proc` from your grid and window goes through `SiteConfig.l_proc`, as you do. The tracker's full 4×4 `TrackReport.P` and fused `heading_std` are what the front end expects.
+
 ### Extended target in the paper pipeline and RT check
 
 `python -m isac.simulate --target-model extended` runs the paper conditions with the multi-scatterer box in place of the point detector (`target.ExtendedDetector`), paired by seed block with the point model, and writes to `outputs/simulation_extended/`. The paper's effective RCS prior is kept: the dominant scatterer is lowered by the box's own contribution at the full-band reference cell (0–1.3 dB per frame), so the two models agree at that cell.
